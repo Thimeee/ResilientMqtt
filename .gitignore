@@ -1,0 +1,11 @@
+# .NET/.NET Core  Git Ignore
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+*.bak
+*.db
+.vs/
+.vscode/
+packages/
