@@ -98,8 +98,22 @@ namespace ResilientMqtt
         /// <summary>Payload published at successful connect.</summary>
         public string OnlinePayload { get; set; } = "ONLINE";
 
-        /// <summary>Payload broker will publish on unexpected disconnect, and we publish on graceful shutdown.</summary>
+        /// <summary>
+        /// Payload the BROKER publishes on UNGRACEFUL disconnect (process crash,
+        /// network drop, TCP timeout). Set this with a clear "connection lost"
+        /// marker so subscribers can distinguish it from a clean shutdown.
+        /// </summary>
         public string OfflinePayload { get; set; } = "OFFLINE";
+
+        /// <summary>
+        /// Optional. Payload WE publish ourselves just before a GRACEFUL
+        /// disconnect (Ctrl+C, service stop, DisconnectAsync called).
+        /// If null, falls back to <see cref="OfflinePayload"/>.
+        /// <para>Use this to distinguish "we left politely" from "we died":
+        /// e.g. <c>OfflinePayload = "{...,reason:connection_lost}"</c> while
+        /// <c>GracefulShutdownPayload = "{...,reason:graceful_shutdown}"</c>.</para>
+        /// </summary>
+        public string? GracefulShutdownPayload { get; set; }
 
         /// <summary>Retain the status message so new subscribers see current state.</summary>
         public bool Retain { get; set; } = true;

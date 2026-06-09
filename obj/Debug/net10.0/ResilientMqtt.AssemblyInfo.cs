@@ -21,7 +21,7 @@ using System.Reflection;
 			Services, Blazor, WPF, and Console apps.
 		")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c5b38cf5d0cfd96d1ce1601a5a8381f9eaa4ca40")]
 [assembly: System.Reflection.AssemblyProductAttribute("ResilientMqtt")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ResilientMqtt")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

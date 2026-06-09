@@ -82,7 +82,10 @@ namespace ResilientMqtt
             if (!string.IsNullOrEmpty(_options.Username))
                 builder.WithCredentials(_options.Username, _options.Password);
 
-            // Last Will & Testament (broker-side)
+            // Last Will & Testament (broker-side).
+            // The broker stores this and publishes it ONLY on UNGRACEFUL disconnect
+            // (process crash, network drop, TCP timeout). On a graceful DisconnectAsync
+            // the broker suppresses it, and we publish GracefulShutdownPayload instead.
             if (_options.LastWill.Enabled)
             {
                 builder
@@ -465,9 +468,17 @@ namespace ResilientMqtt
             {
                 if (_options.LastWill.Enabled)
                 {
+                    // Graceful path: prefer GracefulShutdownPayload if set, else
+                    // fall back to OfflinePayload for backward compatibility.
+                    // (The broker's stored Will — OfflinePayload — is suppressed
+                    //  because we send a clean DISCONNECT packet below.)
+                    var gracefulPayload =
+                        _options.LastWill.GracefulShutdownPayload
+                        ?? _options.LastWill.OfflinePayload;
+
                     await PublishRawAsync(
                         _options.LastWill.Topic,
-                        _options.LastWill.OfflinePayload,
+                        gracefulPayload,
                         retain: _options.LastWill.Retain,
                         qos: ResilientMqttQos.AtLeastOnce,
                         ct: ct).ConfigureAwait(false);
