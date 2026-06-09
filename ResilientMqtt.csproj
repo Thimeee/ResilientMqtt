@@ -13,7 +13,7 @@
 
 		<!-- NuGet Package Metadata -->
 		<PackageId>ResilientMqtt</PackageId>
-		<Version>1.0.0</Version>
+		<Version>1.0.1</Version>
 		<Authors>H.A.T.S Thisera</Authors>
 		<Company>MCS Computer Systems (Pvt) Limited</Company>
 		<Product>ResilientMqtt</Product>
@@ -27,7 +27,7 @@
 		<PackageTags>mqtt;iot;banking;resilience;circuit-breaker;mqttnet</PackageTags>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<RepositoryType>git</RepositoryType>
-		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageReadmeFile>USAGE.md</PackageReadmeFile>
 		<IncludeSymbols>true</IncludeSymbols>
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PublishRepositoryUrl>true</PublishRepositoryUrl>
@@ -36,16 +36,17 @@
 		<RepositoryUrl>https://github.com/Thimeee/ResilientMqtt</RepositoryUrl>
 		<Deterministic>true</Deterministic>
 		<ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+		<PackageIcon>icon.jpeg</PackageIcon>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<None Include="README.md" Pack="true" PackagePath="\">
+		<None Include="USAGE.md" Pack="true" PackagePath="\">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>
 	<ItemGroup>
-		<None Include="icon.png" Pack="true" PackagePath="\">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		<None Include="icon.jpeg" Pack="true" PackagePath="\">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>
 
