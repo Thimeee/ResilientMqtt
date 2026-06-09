@@ -13,7 +13,7 @@
 
 		<!-- NuGet Package Metadata -->
 		<PackageId>ResilientMqtt</PackageId>
-		<Version>1.0.1</Version>
+		<Version>1.0.2</Version>
 		<Authors>H.A.T.S Thisera</Authors>
 		<Company>MCS Computer Systems (Pvt) Limited</Company>
 		<Product>ResilientMqtt</Product>
