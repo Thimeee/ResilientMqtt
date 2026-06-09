@@ -1,0 +1,64 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<LangVersion>latest</LangVersion>
+		<TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
+		<RootNamespace>ResilientMqtt</RootNamespace>
+		<AssemblyName>ResilientMqtt</AssemblyName>
+
+		<!-- NuGet Package Metadata -->
+		<PackageId>ResilientMqtt</PackageId>
+		<Version>1.0.0</Version>
+		<Authors>H.A.T.S Thisera</Authors>
+		<Company>MCS Computer Systems (Pvt) Limited</Company>
+		<Product>ResilientMqtt</Product>
+		<Description>
+			Production-grade MQTT client wrapper for banking and IoT workloads.
+			Features: auto-reconnect with jittered exponential backoff, circuit breaker,
+			offline message buffering, broker-side Last Will &amp; Testament, idle-aware
+			health checks, and pluggable persistence. Drop-in for ASP.NET Core, Worker
+			Services, Blazor, WPF, and Console apps.
+		</Description>
+		<PackageTags>mqtt;iot;banking;resilience;circuit-breaker;mqttnet</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<RepositoryType>git</RepositoryType>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<PublishRepositoryUrl>true</PublishRepositoryUrl>
+		<EmbedUntrackedSources>true</EmbedUntrackedSources>
+		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+		<RepositoryUrl>https://github.com/Thimeee/ResilientMqtt</RepositoryUrl>
+		<Deterministic>true</Deterministic>
+		<ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="README.md" Pack="true" PackagePath="\">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+	<ItemGroup>
+		<None Include="icon.png" Pack="true" PackagePath="\" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="MQTTnet" Version="5.1.0.1559" />
+		<PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
+		<PackageReference Include="Microsoft.SourceLink.GitHub"
+                  Version="8.0.0"
+                  PrivateAssets="All" />
+	</ItemGroup>
+
+
+
+</Project>

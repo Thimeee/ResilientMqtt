@@ -1,0 +1,14 @@
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\bin\Debug\net10.0\ResilientMqtt.deps.json
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\bin\Debug\net10.0\ResilientMqtt.dll
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\bin\Debug\net10.0\ResilientMqtt.pdb
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\bin\Debug\net10.0\ResilientMqtt.xml
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ResilientMqtt.csproj.AssemblyReference.cache
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ResilientMqtt.GeneratedMSBuildEditorConfig.editorconfig
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ResilientMqtt.AssemblyInfoInputs.cache
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ResilientMqtt.AssemblyInfo.cs
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ResilientMqtt.csproj.CoreCompileInputs.cache
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ResilientMqtt.dll
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\refint\ResilientMqtt.dll
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ResilientMqtt.xml
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ResilientMqtt.pdb
+D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ref\ResilientMqtt.dll
