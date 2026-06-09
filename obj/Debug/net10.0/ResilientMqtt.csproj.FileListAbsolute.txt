@@ -12,8 +12,8 @@ D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\Resilie
 D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ResilientMqtt.xml
 D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ResilientMqtt.pdb
 D:\Self Stady\CDK Monitring System\new project (RMM System)\Projects\lib\ResilientMqtt\obj\Debug\net10.0\ref\ResilientMqtt.dll
-D:\Self Stady\importent\libry\.net\ResilientMqtt\v1.0.1\ResilientMqtt\bin\Debug\net10.0\README.md
-D:\Self Stady\importent\libry\.net\ResilientMqtt\v1.0.1\ResilientMqtt\bin\Debug\net10.0\icon.png
+D:\Self Stady\importent\libry\.net\ResilientMqtt\v1.0.1\ResilientMqtt\bin\Debug\net10.0\USAGE.md
+D:\Self Stady\importent\libry\.net\ResilientMqtt\v1.0.1\ResilientMqtt\bin\Debug\net10.0\icon.jpeg
 D:\Self Stady\importent\libry\.net\ResilientMqtt\v1.0.1\ResilientMqtt\bin\Debug\net10.0\ResilientMqtt.deps.json
 D:\Self Stady\importent\libry\.net\ResilientMqtt\v1.0.1\ResilientMqtt\bin\Debug\net10.0\ResilientMqtt.dll
 D:\Self Stady\importent\libry\.net\ResilientMqtt\v1.0.1\ResilientMqtt\bin\Debug\net10.0\ResilientMqtt.pdb
