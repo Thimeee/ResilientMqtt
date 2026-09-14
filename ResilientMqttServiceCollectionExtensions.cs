@@ -90,8 +90,15 @@ namespace ResilientMqtt
                     if (string.IsNullOrWhiteSpace(o.ClientId)) return false;
                     if (o.Tls.Enabled && o.Tls.Mode == "Hard" && string.IsNullOrWhiteSpace(o.Tls.TrustedThumbprint))
                         return false;
+                    // Timeout knobs must be positive; StillDown may be 0 (disabled).
+                    if (o.PublishTimeoutSeconds <= 0) return false;
+                    if (o.Reconnect.ConnectTimeoutSeconds <= 0) return false;
+                    if (o.Reconnect.StillDownAfterSeconds < 0) return false;
+                    if (o.HealthCheck.PingTimeoutSeconds <= 0) return false;
                     return true;
-                }, "Invalid ResilientMqtt configuration. Check Host, Port, ClientId, and Tls settings.")
+                }, "Invalid ResilientMqtt configuration. Check Host, Port, ClientId, Tls, and the timeout " +
+                   "options (ConnectTimeoutSeconds/PublishTimeoutSeconds/PingTimeoutSeconds must be > 0, " +
+                   "StillDownAfterSeconds >= 0).")
                 .ValidateOnStart();
             return this;
         }
@@ -152,6 +159,7 @@ namespace ResilientMqtt
                 return new IdleAwareHealthCheck(
                     TimeSpan.FromMinutes(opts.HealthCheck.IntervalMinutes),
                     TimeSpan.FromMinutes(opts.HealthCheck.IdleThresholdMinutes),
+                    TimeSpan.FromSeconds(opts.HealthCheck.PingTimeoutSeconds),
                     loggerFactory.CreateLogger("ResilientMqtt.HealthCheck"));
             });
 

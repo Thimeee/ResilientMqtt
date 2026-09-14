@@ -13,7 +13,7 @@
 
 		<!-- NuGet Package Metadata -->
 		<PackageId>ResilientMqtt</PackageId>
-		<Version>1.0.2</Version>
+		<Version>1.0.3</Version>
 		<Authors>H.A.T.S Thisera</Authors>
 		<Company>MCS Computer Systems (Pvt) Limited</Company>
 		<Product>ResilientMqtt</Product>
@@ -40,14 +40,22 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<None Include="USAGE.md" Pack="true" PackagePath="\">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</None>
+		<!-- NuGet package readme. File lives under docs/; packed at the package root as USAGE.md to
+		     match PackageReadmeFile. No CopyToOutputDirectory — a readme isn't a build output, and the
+		     old root path + copy was a build blocker (MSB3030: USAGE.md not found). (#18) -->
+		<None Include="docs\USAGE.md" Pack="true" PackagePath="\USAGE.md" />
 	</ItemGroup>
 	<ItemGroup>
 		<None Include="icon.jpeg" Pack="true" PackagePath="\">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
+	</ItemGroup>
+	<ItemGroup>
+		<!-- Trim-safety for config binding (#18) — keeps the options POCOs' properties under IL trimming
+		     so appsettings.json binding still works in trimmed/AOT publishes. -->
+		<EmbeddedResource Include="ILLink.Descriptors.xml">
+			<LogicalName>ILLink.Descriptors.xml</LogicalName>
+		</EmbeddedResource>
 	</ItemGroup>
 
 	<ItemGroup>
@@ -57,7 +65,7 @@
 		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
-		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.401" PrivateAssets="All" />
 	</ItemGroup>
 
 

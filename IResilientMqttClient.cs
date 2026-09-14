@@ -77,7 +77,22 @@ namespace ResilientMqtt
         /// </summary>
         event Func<Task>? OnDisconnected;
 
+        /// <summary>
+        /// Fires once per outage when the client has been unable to reconnect for
+        /// <see cref="ReconnectOptions.StillDownAfterSeconds"/>. Args: (attempt, downDuration).
+        /// Use it to alert ops that a client is still offline. Disabled when
+        /// <c>StillDownAfterSeconds = 0</c>. Invoked on a background task — keep handlers quick.
+        /// </summary>
+        event Action<int, TimeSpan>? StillDown;
+
         Task<bool> ConnectAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// Gracefully publishes the shutdown status and sends a clean DISCONNECT.
+        /// <para><b>Single-use:</b> after this is called the client is permanently shutting down —
+        /// a later <see cref="ConnectAsync"/> is a no-op that returns false. Use it for app shutdown,
+        /// not for a transient disconnect (the built-in reconnect handles transient drops).</para>
+        /// </summary>
         Task DisconnectAsync(CancellationToken ct = default);
 
         // ════════════════════════════════════════════════════════════════
@@ -119,7 +134,12 @@ namespace ResilientMqtt
         // SUBSCRIBE — default useTopicPrefix: false
         // ════════════════════════════════════════════════════════════════
 
-        /// <summary>Subscribe with a typed handler. Auto-resubscribes on reconnect.</summary>
+        /// <summary>
+        /// Subscribe with a typed handler. Auto-resubscribes on reconnect.
+        /// <para><b>Dispatch:</b> an inbound message is delivered to <b>every</b> subscription whose
+        /// filter matches its topic — avoid registering overlapping filters (e.g. a wildcard plus an
+        /// exact topic) unless you intend the handler to run for each match.</para>
+        /// </summary>
         /// <param name="useTopicPrefix">
         /// false (default) → use <paramref name="topicPattern"/> verbatim.
         /// true → prepend <see cref="ResilientMqttOptions.TopicPrefix"/> (useful when

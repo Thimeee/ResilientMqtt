@@ -28,12 +28,17 @@ namespace ResilientMqtt
         private readonly SemaphoreSlim _publishLock = new(1, 1);
 
         private CancellationTokenSource? _reconnectCts;
+        private readonly object _ctsGate = new();          // guards all _reconnectCts access (#3)
         private MqttClientOptions? _mqttOptions;
         private int _isReconnecting;
         private int _isShuttingDown;
         private int _reconnectAttempt;
         private int _disposed;
-        private ResilientMqttConnectionState _state = ResilientMqttConnectionState.Disconnected;
+        private int _isDraining;                 // #16 — single-flight guard for the buffer drain
+        private long _downSinceTicks;            // #4 — when the current outage began (0 = up)
+        private int _stillDownFired;             // #4 — StillDown raised once per outage
+        private readonly CancellationTokenSource _lifetimeCts = new();  // #12 — cancelled on dispose; handed to message handlers
+        private volatile ResilientMqttConnectionState _state = ResilientMqttConnectionState.Disconnected;  // #12 — visible across threads
 
         private static readonly JsonSerializerOptions JsonOpts = new()
         {
@@ -46,6 +51,7 @@ namespace ResilientMqtt
         public event EventHandler<ResilientMqttConnectionState>? StateChanged;
         public event Func<Task>? OnConnected;
         public event Func<Task>? OnDisconnected;
+        public event Action<int, TimeSpan>? StillDown;
 
         public ResilientMqttClient(
             IMqttClient client,
@@ -103,6 +109,11 @@ namespace ResilientMqtt
                     switch (_options.Tls.Mode)
                     {
                         case "Normal":
+                            // #11 — accepts ANY server certificate (MITM-open). Fine for dev/internal LAN,
+                            // NOT for production. Warn loudly so an insecure prod config isn't silent.
+                            _logger.LogWarning(
+                                "[ResilientMqttClient] TLS Mode='Normal' accepts ANY broker certificate " +
+                                "(no MITM protection). Use Mode='Hard' with a pinned thumbprint in production.");
                             o.WithCertificateValidationHandler(_ => true);
                             break;
                         case "Hard":
@@ -123,7 +134,24 @@ namespace ResilientMqtt
         }
 
         // ════════════════════════════════════════════════════════════════
-        public async Task<bool> ConnectAsync(CancellationToken ct = default)
+        // Bounds any MQTTnet call with a linked-CTS timeout so a half-open / stalled
+        // operation can't hang forever while a lock or the reconnect latch is held.
+        private static async Task<T> WithTimeout<T>(
+            Func<CancellationToken, Task<T>> op, TimeSpan timeout, CancellationToken ct)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(timeout);
+            return await op(cts.Token).ConfigureAwait(false);
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        public Task<bool> ConnectAsync(CancellationToken ct = default)
+            => ConnectAsync(ct, isReconnectLoop: false);
+
+        // isReconnectLoop = true when called from TryReconnectAsync's own loop (so a failed
+        // attempt doesn't re-trigger the loop — the loop handles its own retry). When false
+        // (auto-start / user / publish-path), a failed connect schedules the reconnect loop (#13).
+        private async Task<bool> ConnectAsync(CancellationToken ct, bool isReconnectLoop)
         {
             if (IsConnected) return true;
             if (Volatile.Read(ref _isShuttingDown) == 1) return false;
@@ -135,7 +163,13 @@ namespace ResilientMqtt
 
                 SetState(ResilientMqttConnectionState.Connecting);
                 _mqttOptions ??= BuildMqttOptions();
-                var result = await _client.ConnectAsync(_mqttOptions, ct).ConfigureAwait(false);
+
+                // #1 — bound the connect (TCP + CONNECT/CONNACK handshake). A stalled handshake
+                // throws OperationCanceledException after ConnectTimeoutSeconds instead of hanging
+                // forever and stranding the reconnect latch.
+                var connectTimeout = TimeSpan.FromSeconds(Math.Max(1, _options.Reconnect.ConnectTimeoutSeconds));
+                var result = await WithTimeout(
+                    t => _client.ConnectAsync(_mqttOptions, t), connectTimeout, ct).ConfigureAwait(false);
 
                 if (result.ResultCode != MqttClientConnectResultCode.Success)
                 {
@@ -145,6 +179,8 @@ namespace ResilientMqtt
                 }
 
                 Interlocked.Exchange(ref _reconnectAttempt, 0);
+                Interlocked.Exchange(ref _downSinceTicks, 0);   // #4 — outage over
+                Interlocked.Exchange(ref _stillDownFired, 0);
                 _breaker.Reset();
                 SetState(ResilientMqttConnectionState.Connected);
 
@@ -182,7 +218,7 @@ namespace ResilientMqtt
 
                 return true;
             }
-            catch (OperationCanceledException) { return false; }
+            catch (OperationCanceledException) { return false; }   // timeout OR shutdown cancel
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[ResilientMqttClient] ConnectAsync threw");
@@ -192,6 +228,17 @@ namespace ResilientMqtt
             finally
             {
                 _connectLock.Release();
+
+                // #13 — if this attempt didn't connect and it wasn't the reconnect loop itself,
+                // start the loop so a cold-start / one-off failure still recovers on its own
+                // (previously nothing scheduled a retry unless a publish or a disconnect happened).
+                if (!IsConnected
+                    && !isReconnectLoop
+                    && _options.Reconnect.Enabled
+                    && Volatile.Read(ref _isShuttingDown) == 0)
+                {
+                    _ = Task.Run(TryReconnectAsync);
+                }
             }
         }
 
@@ -254,55 +301,71 @@ namespace ResilientMqtt
                 return;
             }
 
-            await _publishLock.WaitAsync(ct).ConfigureAwait(false);
+            try { await _publishLock.WaitAsync(ct).ConfigureAwait(false); }
+            catch (ObjectDisposedException) { _buffer.TryEnqueue(message); return; }   // #17 — disposed mid-flight
             try
             {
-                await _client.PublishAsync(message, ct).ConfigureAwait(false);
+                // #7 — bound the publish so a half-open socket can't hang forever holding _publishLock
+                // (which would freeze every other publish + the buffer drain behind it).
+                var pubTimeout = TimeSpan.FromSeconds(Math.Max(1, _options.PublishTimeoutSeconds));
+                await WithTimeout(t => _client.PublishAsync(message, t), pubTimeout, ct).ConfigureAwait(false);
                 _breaker.RecordSuccess();
                 _healthCheck.NotifyActivity();
             }
             catch (Exception ex)
             {
+                // A timed-out publish (OperationCanceledException) is treated exactly like a failed one.
                 _logger.LogError(ex, "[ResilientMqttClient] Publish failed — buffering. Topic: {Topic}", message.Topic);
                 _breaker.RecordFailure();
                 _buffer.TryEnqueue(message);
             }
             finally
             {
-                _publishLock.Release();
+                try { _publishLock.Release(); } catch (ObjectDisposedException) { }
             }
         }
 
         // ════════════════════════════════════════════════════════════════
         private async Task DrainOfflineBufferAsync(CancellationToken ct)
         {
-            if (_buffer.Count == 0 || !IsConnected) return;
-            _logger.LogInformation("[ResilientMqttClient] Draining offline buffer — {Count}", _buffer.Count);
-
-            while (_buffer.Count > 0 &&
-                   IsConnected &&
-                   Volatile.Read(ref _isShuttingDown) == 0 &&
-                   !ct.IsCancellationRequested)
+            // #16 — single-flight: two quick reconnects would otherwise start two drains that both
+            // TryPeek the same head (duplicate send) and then each TryDequeue — dropping the message
+            // in between. Only one drain runs at a time.
+            if (Interlocked.CompareExchange(ref _isDraining, 1, 0) != 0) return;
+            try
             {
-                if (!_buffer.TryPeek(out var msg) || msg is null) break;
+                if (_buffer.Count == 0 || !IsConnected) return;
+                _logger.LogInformation("[ResilientMqttClient] Draining offline buffer — {Count}", _buffer.Count);
 
-                await _publishLock.WaitAsync(ct).ConfigureAwait(false);
-                try
+                while (_buffer.Count > 0 &&
+                       IsConnected &&
+                       Volatile.Read(ref _isShuttingDown) == 0 &&
+                       !ct.IsCancellationRequested)
                 {
-                    await _client.PublishAsync(msg, ct).ConfigureAwait(false);
-                    _buffer.TryDequeue(out _);
-                    _healthCheck.NotifyActivity();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "[ResilientMqttClient] Drain failed — stopping");
-                    break;
-                }
-                finally { _publishLock.Release(); }
+                    if (!_buffer.TryPeek(out var msg) || msg is null) break;
 
-                try { await Task.Delay(_options.OfflineBuffer.DrainPauseMs, ct).ConfigureAwait(false); }
-                catch (OperationCanceledException) { break; }
+                    try { await _publishLock.WaitAsync(ct).ConfigureAwait(false); }
+                    catch (ObjectDisposedException) { break; }   // #17 — disposed mid-drain
+                    try
+                    {
+                        // #7 — bound the drained publish too (same half-open hazard as the live path).
+                        var pubTimeout = TimeSpan.FromSeconds(Math.Max(1, _options.PublishTimeoutSeconds));
+                        await WithTimeout(t => _client.PublishAsync(msg, t), pubTimeout, ct).ConfigureAwait(false);
+                        _buffer.TryDequeue(out _);
+                        _healthCheck.NotifyActivity();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "[ResilientMqttClient] Drain failed — stopping");
+                        break;
+                    }
+                    finally { try { _publishLock.Release(); } catch (ObjectDisposedException) { } }
+
+                    try { await Task.Delay(_options.OfflineBuffer.DrainPauseMs, ct).ConfigureAwait(false); }
+                    catch (OperationCanceledException) { break; }
+                }
             }
+            finally { Interlocked.Exchange(ref _isDraining, 0); }
         }
 
         // ════════════════════════════════════════════════════════════════
@@ -391,7 +454,9 @@ namespace ResilientMqtt
                 if (!IsTopicMatch(pattern, topic)) continue;
                 try
                 {
-                    await entry.Handler.HandleAsync(topic, payload, CancellationToken.None)
+                    // #12 — hand handlers a real token (cancelled on dispose) instead of None,
+                    // so inbound work can be cancelled at shutdown.
+                    await entry.Handler.HandleAsync(topic, payload, _lifetimeCts.Token)
                                        .ConfigureAwait(false);
                 }
                 catch (Exception ex)
@@ -434,9 +499,10 @@ namespace ResilientMqtt
 
             try
             {
-                _reconnectCts?.Cancel();
-                _reconnectCts = new CancellationTokenSource();
-                var token = _reconnectCts.Token;
+                var token = ResetReconnectCts();   // #3 — thread-safe swap
+
+                // #4 — record when this outage started (only if not already tracking one).
+                Interlocked.CompareExchange(ref _downSinceTicks, DateTime.UtcNow.Ticks, 0);
 
                 while (!IsConnected && Volatile.Read(ref _isShuttingDown) == 0 && !token.IsCancellationRequested)
                 {
@@ -446,13 +512,61 @@ namespace ResilientMqtt
                     _logger.LogInformation("[ResilientMqttClient] Reconnect #{Attempt} in {Seconds}s",
                         attempt, delay.TotalSeconds);
 
+                    RaiseStillDownIfDue(attempt);   // #4
+
                     try { await Task.Delay(delay, token).ConfigureAwait(false); }
                     catch (OperationCanceledException) { break; }
 
-                    if (await ConnectAsync(token).ConfigureAwait(false)) break;
+                    if (await ConnectAsync(token, isReconnectLoop: true).ConfigureAwait(false)) break;
                 }
             }
             finally { Interlocked.Exchange(ref _isReconnecting, 0); }
+        }
+
+        // #3 — all _reconnectCts access is serialized through these two helpers.
+        // Cancel+dispose the old source and hand back a fresh token, atomically.
+        private CancellationToken ResetReconnectCts()
+        {
+            lock (_ctsGate)
+            {
+                try { _reconnectCts?.Cancel(); } catch (ObjectDisposedException) { }
+                _reconnectCts?.Dispose();
+                _reconnectCts = new CancellationTokenSource();
+                return _reconnectCts.Token;
+            }
+        }
+
+        private void CancelReconnectCts()
+        {
+            lock (_ctsGate)
+            {
+                try { _reconnectCts?.Cancel(); } catch (ObjectDisposedException) { }
+            }
+        }
+
+        // #4 — fire StillDown once per outage after StillDownAfterSeconds so a host can alert on a
+        // client that's still offline. Invoked on a background task so a slow handler can't stall
+        // the reconnect loop; exceptions are isolated.
+        private void RaiseStillDownIfDue(int attempt)
+        {
+            var threshold = _options.Reconnect.StillDownAfterSeconds;
+            if (threshold <= 0) return;
+            if (Volatile.Read(ref _stillDownFired) == 1) return;
+
+            var sinceTicks = Interlocked.Read(ref _downSinceTicks);
+            if (sinceTicks == 0) return;
+
+            var down = DateTime.UtcNow - new DateTime(sinceTicks, DateTimeKind.Utc);
+            if (down < TimeSpan.FromSeconds(threshold)) return;
+            if (Interlocked.Exchange(ref _stillDownFired, 1) == 1) return;   // fire exactly once
+
+            var handler = StillDown;
+            if (handler is null) return;
+            _ = Task.Run(() =>
+            {
+                try { handler(attempt, down); }
+                catch (Exception ex) { _logger.LogError(ex, "[ResilientMqttClient] StillDown handler threw"); }
+            });
         }
 
         // ════════════════════════════════════════════════════════════════
@@ -460,7 +574,8 @@ namespace ResilientMqtt
         {
             Interlocked.Exchange(ref _isShuttingDown, 1);
             SetState(ResilientMqttConnectionState.ShuttingDown);
-            _reconnectCts?.Cancel();
+            CancelReconnectCts();
+            _healthCheck.Stop();   // #14 — stop the timer so it doesn't keep ticking/logging after a graceful disconnect
 
             if (!IsConnected) return;
 
@@ -476,12 +591,23 @@ namespace ResilientMqtt
                         _options.LastWill.GracefulShutdownPayload
                         ?? _options.LastWill.OfflinePayload;
 
-                    await PublishRawAsync(
-                        _options.LastWill.Topic,
-                        gracefulPayload,
-                        retain: _options.LastWill.Retain,
-                        qos: ResilientMqttQos.AtLeastOnce,
-                        ct: ct).ConfigureAwait(false);
+                    // #7 — isolate the OFFLINE publish so a failure/timeout here can NEVER skip the
+                    // clean DISCONNECT below (a skipped DISCONNECT would make the broker fire the LWT
+                    // as if we crashed). PublishBytesAsync already swallows + buffers internally; the
+                    // extra guard covers the pre-publish lock-wait cancel edge.
+                    try
+                    {
+                        await PublishRawAsync(
+                            _options.LastWill.Topic,
+                            gracefulPayload,
+                            retain: _options.LastWill.Retain,
+                            qos: ResilientMqttQos.AtLeastOnce,
+                            ct: ct).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "[ResilientMqttClient] Graceful OFFLINE publish failed — disconnecting anyway");
+                    }
                 }
 
                 await _client.DisconnectAsync(
@@ -505,8 +631,9 @@ namespace ResilientMqtt
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
             Interlocked.Exchange(ref _isShuttingDown, 1);
-            _reconnectCts?.Cancel();
+            CancelReconnectCts();
             _healthCheck.Stop();
+            try { _lifetimeCts.Cancel(); } catch (ObjectDisposedException) { }   // #12 — signal handlers to stop
 
             try { await DisconnectAsync().ConfigureAwait(false); }
             catch { /* logged */ }
@@ -515,9 +642,12 @@ namespace ResilientMqtt
             _client.ApplicationMessageReceivedAsync -= OnMessageReceivedAsync;
             _client.Dispose();
 
-            _publishLock.Dispose();
-            _connectLock.Dispose();
-            _reconnectCts?.Dispose();
+            // #17 — a background publish/drain/reconnect may still be mid-flight; swallow the
+            // ObjectDisposedException that a disposed semaphore/CTS would throw during shutdown.
+            try { _publishLock.Dispose(); } catch (ObjectDisposedException) { }
+            try { _connectLock.Dispose(); } catch (ObjectDisposedException) { }
+            lock (_ctsGate) { try { _reconnectCts?.Dispose(); } catch (ObjectDisposedException) { } }
+            try { _lifetimeCts.Dispose(); } catch (ObjectDisposedException) { }
             _healthCheck.Dispose();
         }
 

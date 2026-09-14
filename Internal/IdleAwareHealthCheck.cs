@@ -13,6 +13,7 @@ namespace ResilientMqtt.Internal
     {
         private readonly TimeSpan _interval;
         private readonly TimeSpan _idleThreshold;
+        private readonly TimeSpan _pingTimeout;
         private readonly ILogger _logger;
 
         private Timer? _timer;
@@ -22,10 +23,11 @@ namespace ResilientMqtt.Internal
         private int _isRunning;
         private int _disposed;
 
-        public IdleAwareHealthCheck(TimeSpan interval, TimeSpan idleThreshold, ILogger logger)
+        public IdleAwareHealthCheck(TimeSpan interval, TimeSpan idleThreshold, TimeSpan pingTimeout, ILogger logger)
         {
             _interval = interval;
             _idleThreshold = idleThreshold;
+            _pingTimeout = pingTimeout > TimeSpan.Zero ? pingTimeout : TimeSpan.FromSeconds(10);
             _logger = logger;
             _lastActivityTicks = DateTime.UtcNow.Ticks;
         }
@@ -39,6 +41,10 @@ namespace ResilientMqtt.Internal
 
             var old = Interlocked.Exchange(ref _timer, null);
             old?.Dispose();
+
+            // #15 — clear any stale run-latch left by an in-flight tick of the previous timer,
+            // so the first tick of the new timer can't be skipped.
+            Interlocked.Exchange(ref _isRunning, 0);
 
             NotifyActivity();
             _timer = new Timer(OnTick, null, _interval, _interval);
@@ -69,7 +75,10 @@ namespace ResilientMqtt.Internal
                 {
                     try
                     {
-                        await client.PingAsync().ConfigureAwait(false);
+                        // #9 — bound the ping so a hung ping can't leave _isRunning latched and
+                        // silently kill the monitor. A timed-out ping is treated as a failed one.
+                        using var cts = new CancellationTokenSource(_pingTimeout);
+                        await client.PingAsync(cts.Token).ConfigureAwait(false);
                         NotifyActivity();
                     }
                     catch (Exception ex)

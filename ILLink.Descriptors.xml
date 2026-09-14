@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Preserve the options POCOs so IL trimming cannot strip their properties. Configuration binding
+  (Microsoft.Extensions.Options) sets these via reflection, which the trimmer can't see. Without this,
+  trimmed builds silently ignore appsettings.json values. README §19 / USAGE §16 document this guarantee;
+  this descriptor is what makes it real. (ResilientMqtt #18)
+-->
+<linker>
+  <assembly fullname="ResilientMqtt">
+    <type fullname="ResilientMqtt.ResilientMqttOptions" preserve="all" />
+    <type fullname="ResilientMqtt.TlsOptions" preserve="all" />
+    <type fullname="ResilientMqtt.LastWillOptions" preserve="all" />
+    <type fullname="ResilientMqtt.OfflineBufferOptions" preserve="all" />
+    <type fullname="ResilientMqtt.CircuitBreakerOptions" preserve="all" />
+    <type fullname="ResilientMqtt.HealthCheckOptions" preserve="all" />
+    <type fullname="ResilientMqtt.ReconnectOptions" preserve="all" />
+  </assembly>
+</linker>

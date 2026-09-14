@@ -40,6 +40,7 @@ namespace ResilientMqtt.Internal
         private CircuitState _state = CircuitState.Closed;
         private int _consecutiveFailures;
         private DateTime _openedAtUtc = DateTime.MinValue;
+        private bool _probeInFlight;   // #10 — only ONE probe allowed through while HalfOpen
 
         public CircuitBreaker(int failureThreshold, TimeSpan resetTimeout, ILogger logger)
         {
@@ -57,12 +58,18 @@ namespace ResilientMqtt.Internal
                 switch (_state)
                 {
                     case CircuitState.Closed:
+                        return true;
                     case CircuitState.HalfOpen:
+                        // #10 — admit a SINGLE probe; hold the rest until it resolves, so a recovering
+                        // broker isn't flooded by every queued/new publish the instant it half-opens.
+                        if (_probeInFlight) return false;
+                        _probeInFlight = true;
                         return true;
                     case CircuitState.Open:
                         if (DateTime.UtcNow - _openedAtUtc >= _resetTimeout)
                         {
                             _state = CircuitState.HalfOpen;
+                            _probeInFlight = true;   // this caller IS the probe
                             _logger.LogInformation("[ResilientMqtt] Circuit breaker → HALF-OPEN");
                             return true;
                         }
@@ -77,6 +84,7 @@ namespace ResilientMqtt.Internal
             lock (_gate)
             {
                 _consecutiveFailures = 0;
+                _probeInFlight = false;   // #10 — probe succeeded (or normal success); allow flow again
                 if (_state != CircuitState.Closed)
                 {
                     _state = CircuitState.Closed;
@@ -94,6 +102,7 @@ namespace ResilientMqtt.Internal
                 {
                     _state = CircuitState.Open;
                     _openedAtUtc = DateTime.UtcNow;
+                    _probeInFlight = false;   // #10 — probe failed; a fresh probe is allowed after the next reset
                     _logger.LogWarning("[ResilientMqtt] Circuit breaker → OPEN (probe failed)");
                 }
                 else if (_state == CircuitState.Closed && _consecutiveFailures >= _failureThreshold)
@@ -112,6 +121,7 @@ namespace ResilientMqtt.Internal
             {
                 _consecutiveFailures = 0;
                 _state = CircuitState.Closed;
+                _probeInFlight = false;
             }
         }
     }

@@ -44,6 +44,13 @@ namespace ResilientMqtt
         /// <summary>Keep-alive interval (seconds). Default 30.</summary>
         public int KeepAliveSeconds { get; set; } = 30;
 
+        /// <summary>
+        /// Max seconds to wait for a single publish (QoS1/2 awaiting PUBACK/PUBCOMP) before it is
+        /// treated as failed and the message is buffered. Bounds a publish that would otherwise hang
+        /// on a half-open socket while holding the publish lock. Default 15.
+        /// </summary>
+        public int PublishTimeoutSeconds { get; set; } = 15;
+
         // ════════════════════════════════════════════════════════════════
         // TLS (optional)
         // ════════════════════════════════════════════════════════════════
@@ -156,6 +163,12 @@ namespace ResilientMqtt
 
         /// <summary>Channel idle threshold (minutes) before triggering a ping.</summary>
         public int IdleThresholdMinutes { get; set; } = 2;
+
+        /// <summary>
+        /// Max seconds to wait for a health-check ping before treating it as failed (→ reconnect).
+        /// Prevents a hung ping from silently disabling the monitor. Default 10.
+        /// </summary>
+        public int PingTimeoutSeconds { get; set; } = 10;
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -172,5 +185,19 @@ namespace ResilientMqtt
 
         /// <summary>Apply random jitter to prevent thundering-herd reconnects.</summary>
         public bool UseJitter { get; set; } = true;
+
+        /// <summary>
+        /// Max seconds to wait for a single connect attempt (TCP + MQTT CONNECT/CONNACK handshake)
+        /// before giving up and letting the reconnect loop retry. Bounds a half-open connection that
+        /// would otherwise hang indefinitely. Default 15.
+        /// </summary>
+        public int ConnectTimeoutSeconds { get; set; } = 15;
+
+        /// <summary>
+        /// Raise the <c>StillDown</c> event once per outage after the client has been unable to
+        /// reconnect for this many seconds, so a host can alert on a stuck client. 0 = disabled
+        /// (no behaviour change). Default 120.
+        /// </summary>
+        public int StillDownAfterSeconds { get; set; } = 120;
     }
 }
