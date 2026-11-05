@@ -701,7 +701,7 @@ Every log line carries a stable `EventId` (class `ResilientMqttLogEvents`) so yo
 | 1000 | connection | 1001 Connected · 1002 ConnectFailed · 1003 ConnectTimedOut · 1004 ConnectionLost · 1005 ReconnectScheduled · 1006 StillDown · 1007 DisconnectedGracefully · 1009 ConnectionRestored |
 | 1100 | subscriptions | 1101 Subscribed · **1102 SubscriptionRefused** · 1103 Resubscribing · 1105 SubscribeFailed |
 | 1200 | publish | 1201 PublishFailed · **1202 PublishDenied** · 1204 PublishBlockedCircuitOpen · 1205 PublishFailuresNotLogged |
-| 1300 | offline buffer | 1301 BufferDraining · 1302 BufferDrainFailed · 1303 BufferOverflow |
+| 1300 | offline buffer | 1301 BufferDraining · 1302 BufferDrainFailed · 1303 BufferOverflow · 1304 BufferDropsNotLogged |
 | 1400 | health check | 1401 HealthClientDisconnected · 1402 HealthPingFailed · 1403 HealthForcedReconnect |
 | 1500 | handlers | 1501 HandlerThrew · 1502 EventHandlerThrew · 1503 MessageUnmatched · 1504 HeldMessagesReplayed · 1505 DispatchBackPressure |
 | 1600 | configuration | 1601 TlsInsecure · 1602 SessionMode · 1603 SessionWithRandomClientId · 1604 SessionSettingIgnored |
@@ -709,7 +709,7 @@ Every log line carries a stable `EventId` (class `ResilientMqttLogEvents`) so yo
 
 ### Test coverage — what is proven and what is not *(honest list)*
 
-**Proven by the test suite (142 tests, `dotnet test tests/ResilientMqtt.Tests`)** — real sockets against an in-process
+**Proven by the test suite (146 tests, `dotnet test tests/ResilientMqtt.Tests`)** — real sockets against an in-process
 MQTTnet broker: refused sign-in (+ no `OnDisconnected` per attempt), closed port, silent broker (connect timeout),
 persistent vs clean sessions on MQTT 5 and 3.1.1, `SessionTakenOver`, ACL-refused subscribe / QoS1 publish, publish
 outcomes, idempotent subscribe + no retained replay on a resumed session, zombie detection on MQTT 5 and 3.1.1 (incl.
@@ -729,8 +729,10 @@ limit, and mutual TLS with a certificate from the Windows certificate store.
 **Covered by the test campaign kit, not by `dotnet test`** (needs Docker — `tests/README-TESTING.md`): `Ca` / mutual TLS
 / auth / ACL / restart against **Mosquitto**, the same behaviour on **EMQX and HiveMQ**, real network faults through
 Toxiproxy, a **500-client reconnect storm** and a **multi-hour soak** (QoS1 gaps, memory / thread growth).
+Last run on `1.1.0-rc.3` (2026-11-05): every stage passed, with a **20-minute** soak. The **multi-hour soak is still open**,
+so long-run leaks are not ruled out; storms ran against Mosquitto only.
 
-**Not covered anywhere yet:** the denied-topic log map cap (#60, trivial); MQTT over WebSockets (not supported).
+**Not covered anywhere yet:** MQTT over WebSockets (not supported).
 
 ### Sessions — what `CleanSession` really does *(fixed in 1.1.0)*
 

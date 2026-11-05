@@ -99,6 +99,13 @@ independent code reviews of the 1.1.0 diff itself, after the owner asked "are yo
     how many were skipped; new event **1205 `PublishFailuresNotLogged`** reports the rest once publishing works again.
     Only the log line is limited: buffering and outcomes are unchanged. To measure failures, use the outcomes, not a
     count of 1201 events.
+  - **#69 (`rc.3`)** The same flood with the circuit open: `PublishBlockedCircuitOpen` (1204) wrote one WARNING per
+    publish. Now one per minute with a count.
+  - **#70 (`rc.3`)** The count of unlogged lines was lost if the client stopped before publishing recovered. It is now
+    reported by `DisconnectAsync` / dispose. (A hard process exit or crash cannot report it.)
+  - **#71 (`rc.3`)** During a long outage a full offline buffer wrote one WARNING per dropped message
+    (`BufferOverflow`, 1303). Now one per minute with a count; new event **1304 `BufferDropsNotLogged`** reports the
+    rest when the buffer starts draining.
 - **(#32) Polish:** "Publish failed — buffering" was logged even with the buffer off (the message was dropped); a
   caller-cancelled publish counted as a broker failure; `StateChanged` exceptions were swallowed without a log;
   validation now covers `MaxSize`, `KeepAliveSeconds`, `MaxDelay >= BaseDelay` and every new option.
@@ -127,7 +134,7 @@ independent code reviews of the 1.1.0 diff itself, after the owner asked "are yo
   hole, reset, cut, slow link, fragmentation), cross-broker (Mosquitto / EMQX / HiveMQ), Mosquitto auth / ACL / TLS /
   mutual TLS / restart / 3.1.1 Will (`ResilientMqtt.ChaosTests`, 36 tests), a 500-client reconnect storm (network cut +
   broker restart) and a multi-hour soak with rotating faults and QoS1 gap / leak checks (`ResilientMqtt.LoadTest`).
-- **Tests:** `tests/ResilientMqtt.Tests` — 142 unit + integration tests (in-process MQTTnet broker, real sockets:
+- **Tests:** `tests/ResilientMqtt.Tests` — 146 unit + integration tests (in-process MQTTnet broker, real sockets:
   refused sign-in, closed port, silent broker, sessions, takeover, ACL refusals, retained messages, zombie detection
   through a freezable proxy, lost wake-up, dispatch modes, breaker, graceful status, TLS CA validation, resumed-session
   queue delivery + order, offline unsubscribe, TLS end to end incl. mutual TLS, back-pressure, shutdown races).

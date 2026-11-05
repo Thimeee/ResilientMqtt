@@ -33,6 +33,7 @@ namespace ResilientMqtt
         public static readonly EventId BufferDraining = new(1301, nameof(BufferDraining));
         public static readonly EventId BufferDrainFailed = new(1302, nameof(BufferDrainFailed));
         public static readonly EventId BufferOverflow = new(1303, nameof(BufferOverflow));
+        public static readonly EventId BufferDropsNotLogged = new(1304, nameof(BufferDropsNotLogged));
 
         public static readonly EventId HealthClientDisconnected = new(1401, nameof(HealthClientDisconnected));
         public static readonly EventId HealthPingFailed = new(1402, nameof(HealthPingFailed));

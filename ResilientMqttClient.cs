@@ -91,10 +91,10 @@ namespace ResilientMqtt
         internal const int MaxDeniedTopicsTracked = 1000;
         internal int DeniedTopicsTracked => _deniedLogTicks.Count;
 
-        // #68 — one PublishFailed ERROR per window; the rest are counted. Settable so tests don't wait a minute.
-        internal TimeSpan PublishFailureLogWindow { get; set; } = TimeSpan.FromMinutes(1);
-        private long _publishFailureLoggedTicks;
-        private long _publishFailuresNotLogged;
+        // #68 / #69 — one line per window for each repeating publish problem. Settable so tests don't wait a minute.
+        internal TimeSpan PublishLogWindow { get; set; } = TimeSpan.FromMinutes(1);
+        private readonly LogThrottle _publishFailedLog = new();
+        private readonly LogThrottle _publishBlockedLog = new();
 
         private static readonly JsonSerializerOptions JsonOpts = new()
         {
@@ -603,8 +603,10 @@ namespace ResilientMqtt
             var isProbe = false;
             if (!bypassBreaker && !_breaker.TryAcquire(out isProbe))
             {
-                _logger.LogWarning(ResilientMqttLogEvents.PublishBlockedCircuitOpen,
-                    "[ResilientMqttClient] Publish blocked — circuit OPEN. Topic: {Topic}", message.Topic);
+                if (_publishBlockedLog.ShouldLog(PublishLogWindow, out var skippedBlocked))   // #69
+                    _logger.LogWarning(ResilientMqttLogEvents.PublishBlockedCircuitOpen,
+                        "[ResilientMqttClient] Publish blocked — circuit OPEN. Topic: {Topic}{Skipped}",
+                        message.Topic, LogThrottle.Suffix(skippedBlocked));
                 return Keep(message, allowBuffer);
             }
 
@@ -646,7 +648,7 @@ namespace ResilientMqtt
                         RecordDenied(message.Topic, result.ReasonCode.ToString(), result.ReasonString);
                         return ResilientMqttPublishOutcome.Denied;
                     }
-                    ReportPublishFailuresNotLogged();
+                    ReportPublishProblemsNotLogged("Publishing works again");
                     return ResilientMqttPublishOutcome.Sent;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -679,29 +681,23 @@ namespace ResilientMqtt
         // rest, so a fleet in trouble doesn't fill its disks. Only the log line is limited, never the buffering.
         private void LogPublishFailure(Exception ex, string topic, ResilientMqttPublishOutcome outcome)
         {
-            var now = Now.Ticks;
-            var last = Interlocked.Read(ref _publishFailureLoggedTicks);
-            if (now - last < PublishFailureLogWindow.Ticks
-                || Interlocked.CompareExchange(ref _publishFailureLoggedTicks, now, last) != last)
-            {
-                Interlocked.Increment(ref _publishFailuresNotLogged);
-                return;
-            }
+            if (!_publishFailedLog.ShouldLog(PublishLogWindow, out var skipped)) return;
 
-            var skipped = Interlocked.Exchange(ref _publishFailuresNotLogged, 0);
             _logger.LogError(ResilientMqttLogEvents.PublishFailed, ex,
                 "[ResilientMqttClient] Publish failed — {Outcome}. Topic: {Topic}{Skipped}",
                 outcome == ResilientMqttPublishOutcome.Buffered ? "buffered for retry" : "message dropped (offline buffer disabled)",
-                topic, skipped > 0 ? $" ({skipped} more since the last report)" : string.Empty);
+                topic, LogThrottle.Suffix(skipped));
         }
 
-        private void ReportPublishFailuresNotLogged()
+        // Called when publishing recovers and at shutdown (#70), so the skipped lines are never silently lost.
+        private void ReportPublishProblemsNotLogged(string when)
         {
-            if (Interlocked.Read(ref _publishFailuresNotLogged) == 0) return;
-            var skipped = Interlocked.Exchange(ref _publishFailuresNotLogged, 0);
-            if (skipped > 0)
+            var failed = _publishFailedLog.TakeSkipped();
+            var blocked = _publishBlockedLog.TakeSkipped();
+            if (failed > 0 || blocked > 0)
                 _logger.LogInformation(ResilientMqttLogEvents.PublishFailuresNotLogged,
-                    "[ResilientMqttClient] Publishing works again — {Count} more publish failure(s) were not logged individually.", skipped);
+                    "[ResilientMqttClient] {When} — {Failed} publish failure(s) and {Blocked} blocked publish(es) were not logged individually.",
+                    when, failed, blocked);
         }
 
         private void RecordDenied(string topic, string code, string? reason)
@@ -1336,6 +1332,7 @@ namespace ResilientMqtt
         public async Task DisconnectAsync(CancellationToken ct = default)
         {
             Interlocked.Exchange(ref _isShuttingDown, 1);
+            ReportPublishProblemsNotLogged("Shutting down");   // #70
             try { _shutdownCts.Cancel(); } catch (ObjectDisposedException) { }   // unblock held-queue / dispatch waits (#52)
             SetState(ResilientMqttConnectionState.ShuttingDown);
             CancelReconnectCts();

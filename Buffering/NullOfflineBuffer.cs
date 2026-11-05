@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
+using ResilientMqtt.Internal;
 
 namespace ResilientMqtt.Buffering
 {
@@ -22,9 +23,12 @@ namespace ResilientMqtt.Buffering
         private readonly ConcurrentQueue<MqttApplicationMessage> _queue = new();
         private readonly int _maxSize;
         private readonly ILogger _logger;
+        private readonly TimeSpan _logWindow;
+        private readonly LogThrottle _overflowLog = new();   // #71
 
-        public InMemoryOfflineBuffer(int maxSize, ILogger logger)
+        public InMemoryOfflineBuffer(int maxSize, ILogger logger, TimeSpan? logWindow = null)
         {
+            _logWindow = logWindow ?? TimeSpan.FromMinutes(1);
             _maxSize = Math.Max(1, maxSize);
             _logger = logger;
         }
@@ -35,10 +39,10 @@ namespace ResilientMqtt.Buffering
         {
             while (_queue.Count >= _maxSize)
             {
-                if (_queue.TryDequeue(out _))
+                if (!_queue.TryDequeue(out _)) break;
+                if (_overflowLog.ShouldLog(_logWindow, out var skipped))
                     _logger.LogWarning(ResilientMqttLogEvents.BufferOverflow,
-                        "[ResilientMqtt] Offline buffer full ({Max}) — oldest dropped", _maxSize);
-                else break;
+                        "[ResilientMqtt] Offline buffer full ({Max}) — oldest dropped{Skipped}", _maxSize, LogThrottle.Suffix(skipped));
             }
             _queue.Enqueue(message);
             return true;
@@ -55,6 +59,10 @@ namespace ResilientMqtt.Buffering
         {
             var ok = _queue.TryDequeue(out var m);
             message = m;
+            var skipped = _overflowLog.TakeSkipped();   // draining = the overflow is over: report what wasn't logged
+            if (skipped > 0)
+                _logger.LogInformation(ResilientMqttLogEvents.BufferDropsNotLogged,
+                    "[ResilientMqtt] Offline buffer draining — {Count} more dropped message(s) were not logged individually.", skipped);
             return ok;
         }
 

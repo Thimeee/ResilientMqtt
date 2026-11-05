@@ -3,7 +3,7 @@
 > **What this is:** the complete picture of how ResilientMqtt is tested — why the tests exist, what was built, what
 > every test proves, how the test environment works, how to run it (on this PC or a separate test PC), how long it
 > takes, how to read the results, and what is still not covered.
-> **Version:** written for `1.1.0-rc.1` (2026-10-05), updated for `1.1.0-rc.2` (2026-11-05). Paths are relative to the library root.
+> **Version:** written for `1.1.0-rc.1` (2026-10-05), updated for `1.1.0-rc.3` (2026-11-05). Paths are relative to the library root.
 > **Quick runbook:** `tests/README-TESTING.md` · **Release history:** `CHANGELOG.md` · **Findings that drove the tests:**
 > `docs/ResilientMqtt-Research.md` (1.0.3 audit), `docs/ResilientMqtt-1.0.4-Plan.md` (1.1.0 findings #19–#67).
 
@@ -98,7 +98,7 @@ Numbers like **#44** refer to findings in `docs/ResilientMqtt-1.0.4-Plan.md` / `
 | **HoldReplayTests** (5) | held + restored subscriptions keep arrival order; reconnect during a slow replay loses nothing; shutdown during set-up never replays into the stopping app and keeps the messages; bounded dispose with saturated handlers; `ConnectAsync` false when the set-up was cut short | #49, #51, #52, #63–#66 |
 | **ReviewFindingTests** (7) | held messages survive a stop before `OnConnected` finishes; replayed messages are acknowledged (no redelivery); disconnect during set-up ends with the graceful status and no health timer; no stale "ready"; V311 zombie reset publishes the Will; unknown TLS mode falls back with a warning; CleanSession=true + expiry warns | #53, #55–#59 |
 | **CoverageGapTests** (5) | Concurrent back-pressure loses nothing; dispose waits for handlers; V311 zombie reset; V311 persistent session; `WaitForConnectionAsync` waits for `OnConnected` | #35, #46, #57 |
-| **PublishLogTests** (4) | a run of publish failures logs one ERROR, the rest are reported after recovery or in the next window's line (#68); a skipped log line still buffers the message; the denied-topic log map stays bounded (#60) |
+| **PublishLogTests** (8) | a run of publish failures logs one ERROR, the rest are reported after recovery or in the next window's line (#68); a skipped log line still buffers the message; an open circuit logs one WARNING (#69); shutdown reports the unlogged count once (#70); a full offline buffer logs one WARNING per window and reports the rest when it drains (#71); the denied-topic log map stays bounded (#60) |
 | **TlsTests** (8) | **real TLS endpoint**: `Hard` right/wrong thumbprint; `Ca` right/wrong CA; name check on/off; `None` rejects a private CA; `Normal` + warning; **mutual TLS** with / without a client certificate; wrong PFX password fails fast; TLS against a plain listener → `TlsFailure` | #11, #37, #48 |
 
 ### L3 — Fault injection (`FaultInjectionTests`, 5)
@@ -262,7 +262,7 @@ memory growth shows in `soak-metrics.csv`.
 | **A publish that times out mid-send resets the connection** | measured on the test PC (slow-link chaos test): MQTTnet cannot abandon a half-written packet, so it closes the connection; the library treats it as a normal drop (`ConnectionLost`) and reconnects (~0.3 s there). Very large payloads on very slow links therefore cost a reconnect — size `PublishTimeoutSeconds` for the biggest message and the slowest link. |
 | **At-least-once** | QoS1 duplicates around reconnects are normal; handlers must be idempotent. |
 | **Not covered anywhere yet** | WebSocket transport (not supported). |
-| **First run of EMQX / HiveMQ** | the kit's smoke run on the development PC used Mosquitto only; the cross-broker tests first run on the test PC — a broker-specific difference shows up as a failing test with the measured kind in its output, and is then either fixed in the library or documented here. |
+| **EMQX / HiveMQ** | first run 2026-11-05 (`rc.3`): all cross-broker and network-chaos tests pass on both. Images are `:latest`, so a later run may meet newer versions; a broker-specific difference shows up as a failing test with the measured kind in its output. Storms and soak run against Mosquitto only. |
 
 ---
 
@@ -298,6 +298,7 @@ Each fix found by the campaign gets a test in L1–L3 where possible, so it can 
 
 | Date | Change |
 |------|--------|
-| 2026-11-05 | **`rc.2`:** publish-failure log limit (#68) + `PublishLogTests`; suite 142/142, three runs in a row. The chaos, storm and soak stages have **not** been run on `rc.2`. |
+| 2026-11-05 | **Campaign on `rc.3`** (development PC, 16 cores / 16 GB, `-SoakMinutes 20 -FaultEveryMinutes 3`, 29 min in total): unit 146/146 · chaos 36/36 on Mosquitto + EMQX + HiveMQ · storm 500 clients network cut: all back, max 57.7 s, 0 commands missing · storm 500 clients broker restart: all back, max 59.9 s, 0 commands missing · soak 100 clients, 20 min, 6 faults: 23,900 kiosk → server + 19 command rounds, **0 gaps**, memory +21.7 % (flat from minute 14), threads −9.1 %. `PublishFailed` = 105 in the soak instead of one per failure. **Handles rose 518 → 704 in the soak** (not a pass criterion). A separate measurement with forced GC showed no leak on the reconnect path: 400 reconnect cycles = handles 425 → 431, managed memory flat; 40 failed connects = no growth. So the rise is not yet explained: watch it in the long soak. |
+| 2026-11-05 | **`rc.3`:** log limits for repeating lines (#68–#71) + `PublishLogTests`; suite 146/146, three runs in a row. Each new test was first run against the old code and failed there. (`rc.2` is only a git tag with #68 + #60; it was never published.) |
 | 2026-10-05 | **Smoke on the test PC** (16 cores / 16 GB): all stages PASS — unit 138/138 · chaos (Mosquitto) 16/16 · storm proxy max 22.7 s · storm restart max 7.0 s · soak 0 gaps, memory +8.8 %. Observation documented in §8: a timed-out publish resets the connection (by design of MQTTnet). Next: full run with `-SoakHours 5` (first run of EMQX / HiveMQ). |
 | 2026-10-05 | Kit created (rc.1). Smoke run on the development PC (Mosquitto only) found and fixed 6 kit bugs before hand-over: Mosquitto password-file permissions, Mosquitto crash on restart (`mosquitto_passwd -c` on 2.1), Docker forwarder hiding "refused", soak publishing to the wrong topic, fault rotation counted at the end, overlapping faults colliding in Toxiproxy. Smoke result: unit PASS · chaos 16/16 · storm (proxy) PASS max 12.9 s · storm (restart) PASS max 7.1 s · soak 4 min PASS, 0 gaps. `-SoakOnly` + printed soak finish time added. |

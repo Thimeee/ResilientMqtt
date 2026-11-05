@@ -1,5 +1,8 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using MQTTnet;
 using MQTTnet.Exceptions;
+using ResilientMqtt.Buffering;
+using ResilientMqtt.Internal;
 using ResilientMqtt.Tests.Infrastructure;
 
 namespace ResilientMqtt.Tests.Integration
@@ -50,7 +53,7 @@ namespace ResilientMqtt.Tests.Integration
             await using (broker)
             await using (client)
             {
-                client.PublishFailureLogWindow = TimeSpan.FromMilliseconds(200);
+                client.PublishLogWindow = TimeSpan.FromMilliseconds(200);
                 FailPublishes(faulty);
                 for (var i = 0; i < 3; i++) await client.PublishWithResultAsync("t/1", "x");
                 Assert.Equal(1, log.Count(ResilientMqttLogEvents.PublishFailed));
@@ -81,6 +84,75 @@ namespace ResilientMqtt.Tests.Integration
                 Assert.Equal(1, log.Count(ResilientMqttLogEvents.PublishFailed));
                 Assert.Equal(3, client.ConnectionInfo.BufferedCount);
             }
+        }
+
+        [Fact]
+        public async Task A_run_of_publishes_blocked_by_an_open_circuit_logs_one_warning()   // #69
+        {
+            await using var broker = await TestBroker.StartAsync();
+            var log = new ListLogger<ResilientMqttClient>();
+            var breaker = new CircuitBreaker(1, TimeSpan.FromMinutes(10), NullLogger.Instance);
+            await using var client = TestClients.Create(TestClients.Options(broker.Port), log, breaker: breaker);
+            Assert.True(await client.ConnectAsync());
+
+            Assert.True(breaker.TryAcquire(out _));
+            breaker.RecordFailure();   // circuit OPEN
+            for (var i = 0; i < 5; i++)
+                Assert.Equal(ResilientMqttPublishOutcome.Dropped, await client.PublishWithResultAsync("t/1", "x"));
+
+            Assert.Equal(1, log.Count(ResilientMqttLogEvents.PublishBlockedCircuitOpen));
+        }
+
+        [Fact]
+        public async Task Shutdown_reports_what_was_not_logged_exactly_once()   // #70
+        {
+            var (broker, client, faulty, log) = await ConnectedAsync();
+            await using (broker)
+            await using (client)
+            {
+                FailPublishes(faulty);
+                for (var i = 0; i < 5; i++) await client.PublishWithResultAsync("t/1", "x");
+                faulty.PublishOverride = null;
+
+                await client.DisconnectAsync();
+                await client.DisconnectAsync();
+
+                var report = Assert.Single(log.Entries, e => e.Id.Id == ResilientMqttLogEvents.PublishFailuresNotLogged.Id);
+                Assert.Contains("4", report.Message);
+            }
+        }
+
+        private static MqttApplicationMessage Message() => new MqttApplicationMessageBuilder().WithTopic("t/1").Build();
+
+        [Fact]
+        public void A_full_buffer_logs_one_warning_per_window_and_reports_the_rest_when_it_drains()   // #71
+        {
+            var log = new ListLogger<ResilientMqttClient>();
+            var buffer = new InMemoryOfflineBuffer(1, log);
+
+            for (var i = 0; i < 6; i++) Assert.True(buffer.TryEnqueue(Message()));   // 5 overflows
+
+            Assert.Equal(1, buffer.Count);
+            Assert.Equal(1, log.Count(ResilientMqttLogEvents.BufferOverflow));
+
+            Assert.True(buffer.TryDequeue(out _));
+            var report = Assert.Single(log.Entries, e => e.Id.Id == ResilientMqttLogEvents.BufferDropsNotLogged.Id);
+            Assert.Contains("4", report.Message);
+        }
+
+        [Fact]
+        public async Task A_buffer_that_stays_full_logs_again_each_window_with_the_count()   // #71
+        {
+            var log = new ListLogger<ResilientMqttClient>();
+            var buffer = new InMemoryOfflineBuffer(1, log, TimeSpan.FromMilliseconds(200));
+
+            for (var i = 0; i < 4; i++) buffer.TryEnqueue(Message());   // 3 overflows: 1 logged, 2 counted
+            await Task.Delay(300);
+            buffer.TryEnqueue(Message());
+
+            var warnings = log.Entries.Where(e => e.Id.Id == ResilientMqttLogEvents.BufferOverflow.Id).ToList();
+            Assert.Equal(2, warnings.Count);
+            Assert.Contains("2 more", warnings[1].Message);
         }
 
         [Fact]
