@@ -1,0 +1,5 @@
+# Everything outside these patterns is refused — the tests use "denied/#" to prove refusals are detected.
+user test
+topic readwrite chaos/#
+topic readwrite load/#
+topic readwrite status/#

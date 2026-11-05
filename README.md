@@ -19,6 +19,7 @@
 8. [Publishing messages](#8-publishing-messages)
 9. [Subscribing to messages](#9-subscribing-to-messages)
 10. [Lifecycle events (OnConnected / OnDisconnected)](#10-lifecycle-events-onconnected--ondisconnected)
+    - 10a. [Connection health — why did it fail? (1.1.0)](#10a-connection-health--why-did-it-fail-110)
 11. [Complete Worker Service example](#11-complete-worker-service-example)
 12. [Topic prefix behaviour](#12-topic-prefix-behaviour)
 13. [Where do log messages go?](#13-where-do-log-messages-go)
@@ -49,6 +50,8 @@ A thin, opinionated wrapper over [MQTTnet](https://github.com/dotnet/MQTTnet) th
 - ✅ **Idle-aware health checks** (no needless pings)
 - ✅ **Per-handler exception isolation**
 - ✅ **Connection lifecycle events** (`OnConnected` / `OnDisconnected`) — clean, no polling
+- ✅ **Classified failure reasons** (`LastFailure`, `ConnectionInfo`, `ConnectionLost` / `ConnectionRestored`) — *1.1.0*
+- ✅ **MQTT 5 sessions that do what they say**, mutual TLS + private-CA trust, concurrent dispatch, publish outcomes — *1.1.0*
 - ✅ **Topic prefix auto-application** (multi-tenant friendly)
 - ✅ **JSON, raw string, and binary** publish overloads
 - ✅ **Optional hosted service** for auto-start/stop
@@ -143,7 +146,7 @@ Already built in. Set `Reconnect.UseJitter = true` (default).
 
 TCP sockets can sit in "ESTABLISHED" state for hours after the underlying network died (NAT timeout, firewall state loss). `mqttClient.IsConnected` returns `true` because no RST was received. You'd publish into the void.
 
-ResilientMqtt's **idle-aware health check** pings the broker when the channel is quiet. If the ping fails, it triggers reconnect — you never silently publish into a dead socket.
+ResilientMqtt's **idle-aware health check** pings the broker when nothing has been *received* for a while. If the ping gets no answer while the socket still looks connected, the connection is reset and the normal reconnect runs — you never silently publish into a dead socket. *(Since 1.1.0 only inbound traffic counts as "alive": a QoS0 publish succeeds even on a dead socket, so a client that only publishes is still checked.)*
 
 ### Benefit 5: Lifecycle events — no polling loops
 
@@ -212,11 +215,14 @@ The exact same library binary ships to:
 | DI integration | ⚠️ Manual wiring | ✅ One-line registration |
 | Auto-resubscribe on reconnect | ❌ You implement | ✅ Built-in |
 | Buffer drain on reconnect | ❌ You implement | ✅ Built-in |
-| Configuration validation | ❌ You implement | ✅ Built-in |
+| Configuration validation | ❌ You implement | ✅ Built-in (one clear message per problem) |
+| Classified failure reasons | ❌ Raw exceptions / codes | ✅ `LastFailure` + `ConnectionInfo` |
+| Refused subscribe / publish detection | ⚠️ Inspect every result | ✅ Logged, counted, `Denied` outcome |
+| Mutual TLS / private CA | ⚠️ Manual handlers | ✅ Config only |
 
 ### When raw MQTTnet still wins
 
-- You need **MQTT 5-specific features** (user properties, reason codes, topic aliases)
+- You need **MQTT 5 extras** (user properties, request/response, topic aliases) — MQTT 5 is the default protocol and its reason codes are classified, but these are not exposed
 - You need **WebSocket transport** (could be added to ResilientMqtt — open an issue)
 - You're writing a **broker / server side** application (this library is client-side)
 
@@ -242,6 +248,21 @@ dotnet add package ResilientMqtt
 
 **Target framework:** .NET 10.0
 **Dependency:** MQTTnet 5.1+
+
+### Running the library's tests
+
+```bash
+dotnet test tests/ResilientMqtt.Tests
+```
+
+Unit tests plus integration tests against an in-process MQTTnet broker (real sockets: refused sign-in, refused
+subscription/publish, sessions, retained messages, zombie connections, takeovers). The test project is excluded from
+the library build and the package.
+
+**Full test campaign** (real brokers in Docker, network chaos, 500-client reconnect storm, multi-hour soak):
+see [`tests/README-TESTING.md`](tests/README-TESTING.md) — `tests\run-all.ps1 -Smoke` for a quick check.
+
+**Library documents:** [Testing guide](docs/TESTING.md) · [Usage](docs/USAGE.md) · [Future features](docs/FUTURE-FEATURES.md) · [Roadmap](docs/ROADMAP.md) · history of the audits: [1.0.3 research](docs/ResilientMqtt-Research.md), [1.0.3 plan](docs/ResilientMqtt-1.0.3-Plan.md), [1.1.0 investigation & findings](docs/ResilientMqtt-1.0.4-Plan.md).
 
 ---
 
@@ -581,6 +602,167 @@ mqtt.StateChanged += (sender, state) =>
     logger.LogDebug("MQTT state: {State}", state);
 };
 ```
+
+---
+
+## 10a. Connection health — *why* did it fail? *(1.1.0)*
+
+A resilient client must not only reconnect — it must tell you **why** it couldn't, so your app (or a person) can
+react correctly. Wrong credentials, a bad certificate or a stopped broker will **never** fix themselves by retrying;
+a network blip will.
+
+### `LastFailure` — the classified reason
+
+```csharp
+if (!mqtt.IsConnected && mqtt.LastFailure is { } f)
+{
+    // f.Kind: AuthRejected | TlsFailure | BrokerUnavailable | Network | Timeout | SessionTakenOver | ProtocolError | Unknown
+    logger.LogWarning("MQTT down: {Kind} — {Detail} (code {Code})", f.Kind, f.Detail, f.Code);
+}
+```
+
+| Kind | Typical cause | Will retrying fix it? |
+|------|---------------|-----------------------|
+| `AuthRejected` | wrong / rotated / revoked credentials, banned client | ❌ needs new credentials |
+| `TlsFailure` | certificate rejected, TLS against a non-TLS port | ❌ needs a config / cert fix |
+| `BrokerUnavailable` | port closed, broker stopped / shutting down / busy / rate-limited | ⏳ when the broker is back |
+| `Network` | DNS failure, host unreachable, connection reset | ✅ usually |
+| `Timeout` | no answer in time (connect, keep-alive, health ping) | ✅ usually |
+| `SessionTakenOver` | another client connected with **the same ClientId** (cloned machine?) | ❌ fix the duplicate id |
+| `ProtocolError` | invalid client id, unsupported protocol, endpoint isn't an MQTT broker | ❌ config fix |
+
+The mapping is built from **measured** MQTTnet 5 behaviour (e.g. a refused sign-in *returns* a CONNACK code, a closed
+port throws `SocketException(ConnectionRefused)`, a rejected certificate throws `AuthenticationException`).
+
+### `ConnectionInfo` — one snapshot for dashboards and health endpoints
+
+```csharp
+var i = mqtt.ConnectionInfo;
+// i.State, i.IsConnected, i.ConnectedSinceUtc, i.DownSinceUtc, i.ReconnectAttempt,
+// i.TotalConnects (rising fast = flapping), i.LastFailure, i.BufferedCount,
+// i.RejectedSubscriptions (filter → code), i.DeniedPublishes, i.ProtocolVersion, i.SessionPresent
+```
+
+### Events with details
+
+```csharp
+mqtt.ConnectionLost += a =>        // once per real drop (not per failed retry)
+{
+    logger.LogWarning("Lost after {Up}: {Kind}", a.WasConnectedFor, a.Failure.Kind);
+    return Task.CompletedTask;
+};
+mqtt.ConnectionRestored += a =>    // after an outage: downtime, attempts, session resumed?
+{
+    logger.LogInformation("Back after {Down} ({Attempts} attempts)", a.Downtime, a.Attempts);
+    return Task.CompletedTask;
+};
+```
+
+`OnConnected` / `OnDisconnected` / `StillDown` / `StateChanged` are unchanged. Since 1.1.0 `OnDisconnected` fires
+**once per real drop** (it used to fire for every failed reconnect attempt too).
+
+### Did my message actually go out? — `PublishWithResultAsync`
+
+```csharp
+var outcome = await mqtt.PublishWithResultAsync("commands/reboot", cmd);
+// Sent | Buffered (offline buffer — sent after reconnect) | Dropped (lost) | Denied (broker refused, QoS1/2)
+```
+
+### Refusals are no longer silent
+
+- A **subscription the broker refuses** (ACL) is logged as an error (event 1102) and listed in
+  `ConnectionInfo.RejectedSubscriptions` — before 1.1.0 it was logged as "Subscribed". *Only possible when the broker
+  says so in the SUBACK:* Mosquitto's dynamic-security plugin, EMQX and HiveMQ do; Mosquitto's classic `acl_file`
+  **grants** the SUBACK and silently filters delivery — no client can detect that (measured in the test campaign).
+- A **QoS1/2 publish the broker refuses** returns `Denied`, is logged (event 1202, rate-limited) and counted —
+  before 1.1.0 it counted as a success. (QoS 0 has no acknowledgement, so a refusal can't be seen.)
+
+### Waiting for the connection
+
+Returns `true` once the client is connected **and ready** — subscriptions restored and `OnConnected` handlers finished.
+
+```csharp
+if (!await mqtt.WaitForConnectionAsync(TimeSpan.FromSeconds(30)))
+    logger.LogWarning("Still offline: {Why}", mqtt.LastFailure?.Kind);
+```
+
+### Slow handlers: `Dispatch.Mode`
+
+By default (`Inline`) handlers run one at a time on the receive loop — a slow handler delays all inbound traffic
+**and the keep-alive**. Set `"Dispatch": { "Mode": "Concurrent", "MaxConcurrency": 8 }` to run handlers off the
+receive loop (messages may then be processed out of order; QoS1 is acknowledged before the handler finishes).
+
+### Log event ids
+
+Every log line carries a stable `EventId` (class `ResilientMqttLogEvents`) so you can filter or alert on it:
+
+| Range | Area | Key ids |
+|-------|------|---------|
+| 1000 | connection | 1001 Connected · 1002 ConnectFailed · 1003 ConnectTimedOut · 1004 ConnectionLost · 1005 ReconnectScheduled · 1006 StillDown · 1007 DisconnectedGracefully · 1009 ConnectionRestored |
+| 1100 | subscriptions | 1101 Subscribed · **1102 SubscriptionRefused** · 1103 Resubscribing · 1105 SubscribeFailed |
+| 1200 | publish | 1201 PublishFailed · **1202 PublishDenied** · 1204 PublishBlockedCircuitOpen |
+| 1300 | offline buffer | 1301 BufferDraining · 1302 BufferDrainFailed · 1303 BufferOverflow |
+| 1400 | health check | 1401 HealthClientDisconnected · 1402 HealthPingFailed · 1403 HealthForcedReconnect |
+| 1500 | handlers | 1501 HandlerThrew · 1502 EventHandlerThrew · 1503 MessageUnmatched · 1504 HeldMessagesReplayed · 1505 DispatchBackPressure |
+| 1600 | configuration | 1601 TlsInsecure · 1602 SessionMode · 1603 SessionWithRandomClientId · 1604 SessionSettingIgnored |
+| 1700 | circuit breaker | 1701 CircuitOpened · 1702 CircuitHalfOpen · 1703 CircuitClosed |
+
+### Test coverage — what is proven and what is not *(honest list)*
+
+**Proven by the test suite (138 tests, `dotnet test tests/ResilientMqtt.Tests`)** — real sockets against an in-process
+MQTTnet broker: refused sign-in (+ no `OnDisconnected` per attempt), closed port, silent broker (connect timeout),
+persistent vs clean sessions on MQTT 5 and 3.1.1, `SessionTakenOver`, ACL-refused subscribe / QoS1 publish, publish
+outcomes, idempotent subscribe + no retained replay on a resumed session, zombie detection on MQTT 5 and 3.1.1 (incl.
+the 3.1.1 self-published Will), lost wake-up, resumed-session queue delivered to handlers registered in `OnConnected`
+(order kept, acknowledged only after delivery, redelivered after a stop / a reconnect mid-replay), offline unsubscribe,
+`Inline`/`Concurrent` dispatch, back-pressure, bounded dispose, breaker probe/drain, graceful status (breaker open,
+dispose without disconnect, disconnect during set-up), `WaitForConnectionAsync` readiness, and **TLS end to end**:
+`Hard`, `Ca` (+ name check), `None` vs a private CA, `Normal`, **mutual TLS** with a PFX, TLS against a plain port,
+unknown mode fallback. Several fixes were also proven by running their test against the **pre-fix code** (it fails).
+Re-checked against a real **Mosquitto** broker: refused sign-in, ACL refusals, persistent session, takeover, TLS
+`Normal`/`Hard`, TLS against a plain port, closed port.
+
+Since 1.1.0-rc.1 the suite also drives, through a fault-injection decorator: a CONNACK at the timeout boundary (#47), a
+shutdown cancel wrapped by MQTTnet (#50/#67), a caller token cancelled mid-set-up (#54), the hold-queue back-pressure
+limit, and mutual TLS with a certificate from the Windows certificate store.
+
+**Covered by the test campaign kit, not by `dotnet test`** (needs Docker — `tests/README-TESTING.md`): `Ca` / mutual TLS
+/ auth / ACL / restart against **Mosquitto**, the same behaviour on **EMQX and HiveMQ**, real network faults through
+Toxiproxy, a **500-client reconnect storm** and a **multi-hour soak** (QoS1 gaps, memory / thread growth).
+
+**Not covered anywhere yet:** the denied-topic log map cap (#60, trivial); MQTT over WebSockets (not supported).
+
+### Sessions — what `CleanSession` really does *(fixed in 1.1.0)*
+
+MQTTnet 5 speaks **MQTT 5.0** by default, where a session lives only as long as `SessionExpiryInterval` says. Before
+1.1.0 the library never set it (MQTTnet's default is **0**), so `CleanSession = false` silently meant *"no session"* —
+nothing was queued while a client was offline, contrary to these docs. Since 1.1.0:
+
+| Setting | Effect |
+|---------|--------|
+| `CleanSession: true` | clean start; nothing is queued while offline. Choose this when a stale command must never run late. |
+| `CleanSession: false` (no `SessionExpirySeconds`) | persistent session for **1 day** (`DefaultPersistentSessionSeconds`); QoS1/2 messages are queued while offline and delivered on reconnect. **Use a stable `ClientId`.** |
+| `SessionExpirySeconds: N` | explicit session length on MQTT 5 (`0` = ends with the connection). Ignored on 3.1.1. |
+| `ProtocolVersion: "V311"` | MQTT 3.1.1 (the broker decides session length; no reason codes). |
+
+The startup log (event 1602) states the effective mode, and warns when a persistent session is combined with the
+auto-generated `ClientId` (event 1603). On MQTT 5, restored subscriptions use *retain-handling = new subscriptions
+only*, so resuming a session doesn't replay every retained message.
+
+**Queued messages are never lost to a late subscription:** a resumed session delivers its queue right after the
+CONNACK — often before your `OnConnected` handler has subscribed. Messages that match no subscription during
+connection set-up are held and delivered once `OnConnected` finishes, in arrival order (event 1504); held QoS1/2
+messages are acknowledged only after they reached a handler, so if the app stops first the broker redelivers them on
+the next session. Simplest of all: subscribe **before** connecting — subscriptions are remembered and restored before
+any message is delivered. Unsubscribing while offline is applied to the resumed session on the next connect.
+
+**Delivery semantics (at-least-once):** QoS1 messages can be delivered twice around a reconnect (that is MQTT); make
+handlers idempotent. In `Inline` mode a QoS1 message is acknowledged after its handler returns; in `Concurrent` mode it
+is acknowledged when it is handed to the thread pool (MQTT requires acknowledgements in arrival order, which concurrent
+handlers can't guarantee) — a crash while the handler runs loses that message.
+
+**MQTT 3.1.1 note:** when the health check resets a dead ("zombie") connection, a 3.1.1 DISCONNECT always discards the
+Will, so the client publishes the Will payload itself first (MQTT 5 sends a reason code that makes the broker publish it).
 
 ---
 
@@ -985,18 +1167,27 @@ The rest of the library uses your buffer transparently. No code changes elsewher
 | `Mqtt:Port` | int | `1883` | Broker TCP port (use 8883 for TLS) |
 | `Mqtt:Username` | string | `""` | Auth username (empty = anonymous) |
 | `Mqtt:Password` | string | `""` | Auth password |
-| `Mqtt:ClientId` | string | random GUID | **MUST be unique per running instance** |
+| `Mqtt:ClientId` | string | random GUID | **MUST be unique per running instance** (stable when using a persistent session) |
 | `Mqtt:TopicPrefix` | string | `""` | Auto-prefix for publishes |
-| `Mqtt:CleanSession` | bool | `false` | false = persist QoS1+ across reconnects |
+| `Mqtt:ProtocolVersion` | string | `V500` | `V500` (MQTT 5.0) or `V311` (MQTT 3.1.1) — *1.1.0* |
+| `Mqtt:CleanSession` | bool | `false` | `false` = persistent session (QoS1/2 queued while offline — see §10a); `true` = clean start |
+| `Mqtt:SessionExpirySeconds` | int? | *(auto)* | MQTT 5 session length; auto = 86400 when `CleanSession=false`, 0 when `true` — *1.1.0* |
 | `Mqtt:KeepAliveSeconds` | int | `30` | MQTT keep-alive interval |
+| `Mqtt:PublishTimeoutSeconds` | int | `15` | Max wait for one publish (QoS1/2 ack) before it counts as failed |
 
 ### TLS
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `Mqtt:Tls:Enabled` | bool | `false` | Enable TLS |
-| `Mqtt:Tls:Mode` | string | `None` | `None` / `Normal` (accept any) / `Hard` (pin thumbprint) |
-| `Mqtt:Tls:TrustedThumbprint` | string | `""` | SHA1/SHA256 thumbprint when Mode=Hard |
+| `Mqtt:Tls:Mode` | string | `None` | `None` (OS validation) / `Normal` (accept any — dev only) / `Hard` (pin thumbprint) / `Ca` (trust a private CA). Empty = `None`; an unknown value falls back to `None` with a warning (as in 1.0.3) and fails `ValidateOnStart()` |
+| `Mqtt:Tls:TrustedThumbprint` | string | `""` | Certificate thumbprint when Mode=Hard (spaces/colons ignored) |
+| `Mqtt:Tls:CaCertificatePath` | string | `""` | Mode=Ca: CA certificate (PEM/DER) that issued the broker cert — *1.1.0* |
+| `Mqtt:Tls:CheckCertificateName` | bool | `true` | Mode=Ca: also require the cert name to match the host — *1.1.0* |
+| `Mqtt:Tls:ClientCertificatePath` | string | `""` | Mutual TLS: client cert + key (PFX) — *1.1.0* |
+| `Mqtt:Tls:ClientCertificatePassword` | string | `""` | PFX password (use secrets / env vars) — *1.1.0* |
+| `Mqtt:Tls:ClientCertificateThumbprint` | string | `""` | Mutual TLS: client cert from the OS store instead of a file — *1.1.0* |
+| `Mqtt:Tls:ClientCertificateStore` | string | `LocalMachine` | `LocalMachine` or `CurrentUser` — *1.1.0* |
 
 ### Last Will & Testament
 
@@ -1030,7 +1221,8 @@ The rest of the library uses your buffer transparently. No code changes elsewher
 |---|---|---|---|
 | `Mqtt:HealthCheck:Enabled` | bool | `true` | Enable idle-aware ping monitor |
 | `Mqtt:HealthCheck:IntervalMinutes` | int | `1` | Timer tick cadence |
-| `Mqtt:HealthCheck:IdleThresholdMinutes` | int | `2` | Quiet time before pinging |
+| `Mqtt:HealthCheck:IdleThresholdMinutes` | int | `2` | Time without *inbound* traffic before pinging |
+| `Mqtt:HealthCheck:PingTimeoutSeconds` | int | `10` | No ping reply in time → the connection is reset |
 
 ### Reconnect
 
@@ -1040,6 +1232,18 @@ The rest of the library uses your buffer transparently. No code changes elsewher
 | `Mqtt:Reconnect:BaseDelaySeconds` | int | `1` | Initial backoff delay |
 | `Mqtt:Reconnect:MaxDelaySeconds` | int | `60` | Backoff cap |
 | `Mqtt:Reconnect:UseJitter` | bool | `true` | Randomize delays (prevents thundering herd) |
+| `Mqtt:Reconnect:ConnectTimeoutSeconds` | int | `15` | Max wait for one connect (TCP + handshake); also bounds subscribe/unsubscribe |
+| `Mqtt:Reconnect:StillDownAfterSeconds` | int | `120` | Raise `StillDown` once per outage after this long (0 = off) |
+| `Mqtt:Reconnect:AuthRejectedDelaySeconds` | int | `0` | After a refused sign-in wait at least this long before retrying (0 = normal backoff) — *1.1.0* |
+
+### Dispatch *(1.1.0)*
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `Mqtt:Dispatch:Mode` | string | `Inline` | `Inline` (in order, on the receive loop) / `Concurrent` (off the loop) |
+| `Mqtt:Dispatch:MaxConcurrency` | int | `8` | Concurrent: handlers running at once |
+| `Mqtt:Dispatch:ShutdownWaitSeconds` | int | `5` | Concurrent: wait for running handlers on dispose |
+| `Mqtt:Dispatch:MaxPending` | int | `1000` | Concurrent: handler calls allowed to wait before intake is slowed (back-pressure, no unbounded memory) |
 
 ---
 
@@ -1110,7 +1314,8 @@ mqtt.OnConnected += async () =>
         qos: ResilientMqttQos.AtLeastOnce);
 };
 
-// Combined with CleanSession: false → no missed patches even after long outages
+// Combined with CleanSession: false + a STABLE ClientId → the broker queues them while offline
+// for SessionExpirySeconds (default 1 day). (Before 1.1.0 this did NOT work on MQTT 5 — see §10a.)
 ```
 
 ### Scenario 5: Multi-tenant API server
@@ -1148,7 +1353,7 @@ public class TenantBroadcastService
 
 - You need very high throughput (1000+ msg/sec) — profile circuit breaker overhead
 - You target trimmed / AOT builds — library is trim-safe but **test it**
-- You need MQTT 5 advanced features — currently uses v3.1.1 semantics
+- You need MQTT 5 extras (user properties, request/response) — MQTT 5 is the default protocol, but those aren't exposed yet
 
 ### ❌ "Probably no"
 
@@ -1302,6 +1507,11 @@ delay       = max(jittered, baseDelay)
 
 ## 21. Troubleshooting
 
+### First step for any connection problem: read `LastFailure`
+
+The log line `Connect failed — <Kind>: <detail>` (event 1002/1003) or `mqtt.LastFailure` / `mqtt.ConnectionInfo`
+tells you which of the cases below you're in (see §10a).
+
 ### "Connect failed — broker not responding"
 
 - ✅ Check `Mqtt:Host` and `Mqtt:Port`
@@ -1315,6 +1525,7 @@ delay       = max(jittered, baseDelay)
 - ✅ Check for **IL trimming** stripping properties (see section 19)
 - ✅ Confirm `appsettings.json` is in publish folder
 - ✅ Use the debug logger snippet (section 22 FAQ) to inspect actually-loaded values
+- ✅ `LastFailure.Kind == AuthRejected` — retrying won't help; consider `Reconnect:AuthRejectedDelaySeconds` so a fleet with a rotated password doesn't hammer the broker
 
 ### Messages aren't reaching subscribers
 
@@ -1327,6 +1538,7 @@ delay       = max(jittered, baseDelay)
 - ✅ Two services using the same `ClientId` kick each other off forever
 - ✅ Derive `ClientId` per-instance (machine name, branch ID)
 - ✅ Don't rely on the random default in production
+- ✅ On MQTT 5 the victim's `LastFailure.Kind` is `SessionTakenOver` — a duplicated/cloned machine
 
 ### Buffer keeps overflowing
 
@@ -1339,6 +1551,9 @@ delay       = max(jittered, baseDelay)
 - ✅ Try `Mqtt:Tls:Mode = "Normal"` first to confirm TLS works at all
 - ✅ Then switch to `"Hard"` with correct `TrustedThumbprint`
 - ✅ Get thumbprint: `openssl s_client -connect broker:8883 | openssl x509 -fingerprint -noout`
+- ✅ Private PKI: `Mode = "Ca"` + `CaCertificatePath` validates the full chain (survives broker cert renewal, unlike a pinned thumbprint)
+- ✅ Broker requires client certificates: set `ClientCertificatePath` (+ password) or `ClientCertificateThumbprint`
+- ✅ `LastFailure.Detail` says "TLS on a non-TLS port?" when TLS was attempted against a plain listener
 
 ### `OnConnected` never fires
 
@@ -1351,7 +1566,7 @@ delay       = max(jittered, baseDelay)
 ## 22. FAQ
 
 **Q: Does this support MQTT v5?**
-A: It uses MQTTnet 5.x which supports v5, but the library currently targets v3.1.1 features for broader broker compatibility. v5 user properties + reason codes can be added on request.
+A: Yes — **MQTT 5.0 is the default** (`ProtocolVersion: "V500"`); set `"V311"` for 3.1.1-only brokers. Broker reason codes (refused sign-in, session taken over, server shutting down…) are classified into `LastFailure`. User properties / request-response are not exposed yet.
 
 **Q: Can I use this in a console app / WPF / Blazor?**
 A: Yes — anywhere `IServiceCollection` and `Microsoft.Extensions.Logging` work. For non-host apps, build the provider manually:
@@ -1365,16 +1580,16 @@ await mqtt.ConnectAsync();
 ```
 
 **Q: Is `IResilientMqttClient` thread-safe?**
-A: Yes. `PublishAsync` from multiple threads is fine — internally serialized via `SemaphoreSlim`. `SubscribeAsync` uses a `ConcurrentDictionary`.
+A: Yes. `PublishAsync` from multiple threads is fine — internally serialized via `SemaphoreSlim`. `SubscribeAsync` uses a `ConcurrentDictionary`. Reconnect, drain, breaker and dispose paths are guarded (1.0.3/1.1.0 hardening, covered by the test suite).
 
 **Q: What happens to QoS 1/2 messages if my app crashes?**
-A: If `CleanSession = false`, the broker holds them until you reconnect. Your in-memory buffer is lost — use a persistent `IOfflineBuffer` for zero-loss (section 15).
+A: Messages **sent to you**: with `CleanSession = false` (and a stable `ClientId`) the broker queues them for `SessionExpirySeconds` (default 1 day) and delivers them when you reconnect. Messages **you publish** while offline sit in the offline buffer, which is in-memory and lost on a crash — use a persistent `IOfflineBuffer` for zero-loss (section 15).
 
 **Q: Can I have multiple MQTT connections in one app?**
 A: Not directly — `AddResilientMqtt` registers `IResilientMqttClient` as a singleton. For multiple brokers, run multiple processes or open an issue.
 
 **Q: Does it work with HiveMQ / Mosquitto / EMQX / AWS IoT Core?**
-A: Yes — anything MQTT 3.1.1 compliant.
+A: Yes — any MQTT 5.0 broker, or any 3.1.1 broker with `ProtocolVersion: "V311"`. Mutual TLS (AWS IoT, Azure IoT, private PKI) is supported via `Tls:ClientCertificate*`.
 
 **Q: Why is `IHostedService` used for auto-start instead of `BackgroundService`?**
 A: Auto-start has two run-once events (connect on boot, disconnect on shutdown) — no continuous loop. `IHostedService` is the right contract.

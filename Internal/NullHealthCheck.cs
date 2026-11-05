@@ -11,7 +11,7 @@ namespace ResilientMqtt.Internal
     /// </summary>
     internal sealed class NullHealthCheck : IHealthCheck
     {
-        public void Start(IMqttClient client, Func<Task> onUnhealthy) { }
+        public void Start(IMqttClient client, Func<Task> onDisconnected, Func<Task> onPingFailed) { }
         public void NotifyActivity() { }
         public void Stop() { }
         public void Dispose() { }

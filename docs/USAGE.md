@@ -122,13 +122,22 @@ Copy this into your `appsettings.json` and edit the values. Every option is show
     "Password": "your-password",
     "ClientId": "unique-per-instance",
     "TopicPrefix": "tenants/abc",
+    "ProtocolVersion": "V500",
     "CleanSession": false,
+    "SessionExpirySeconds": 86400,
     "KeepAliveSeconds": 30,
+    "PublishTimeoutSeconds": 15,
 
     "Tls": {
       "Enabled": true,
-      "Mode": "Normal",
-      "TrustedThumbprint": ""
+      "Mode": "Hard",
+      "TrustedThumbprint": "",
+      "CaCertificatePath": "",
+      "CheckCertificateName": true,
+      "ClientCertificatePath": "",
+      "ClientCertificatePassword": "",
+      "ClientCertificateThumbprint": "",
+      "ClientCertificateStore": "LocalMachine"
     },
 
     "LastWill": {
@@ -154,14 +163,25 @@ Copy this into your `appsettings.json` and edit the values. Every option is show
     "HealthCheck": {
       "Enabled": true,
       "IntervalMinutes": 1,
-      "IdleThresholdMinutes": 2
+      "IdleThresholdMinutes": 2,
+      "PingTimeoutSeconds": 10
     },
 
     "Reconnect": {
       "Enabled": true,
       "BaseDelaySeconds": 1,
       "MaxDelaySeconds": 60,
-      "UseJitter": true
+      "UseJitter": true,
+      "ConnectTimeoutSeconds": 15,
+      "StillDownAfterSeconds": 120,
+      "AuthRejectedDelaySeconds": 0
+    },
+
+    "Dispatch": {
+      "Mode": "Inline",
+      "MaxConcurrency": 8,
+      "ShutdownWaitSeconds": 5,
+      "MaxPending": 1000
     }
   }
 }
@@ -179,10 +199,16 @@ Copy this into your `appsettings.json` and edit the values. Every option is show
 | `Port` | `1883` | Broker TCP port | Set to `8883` for TLS |
 | `Username` | `""` | Auth username | If broker requires auth |
 | `Password` | `""` | Auth password | If broker requires auth |
-| `ClientId` | random GUID | Unique connection ID | **Always set explicitly** — duplicates kick each other off |
+| `ClientId` | random GUID | Unique connection ID | **Always set explicitly** — duplicates kick each other off (`SessionTakenOver`) |
 | `TopicPrefix` | `""` | Auto-prefix for publishes | Multi-tenant setups (e.g. `"branches/B001"`) |
-| `CleanSession` | `false` | `false` = broker keeps QoS1+ messages across reconnects | Set `true` only for stateless workloads |
+| `ProtocolVersion` | `V500` | MQTT 5.0 (`V500`) or 3.1.1 (`V311`) | `V311` only for brokers without MQTT 5 |
+| `CleanSession` | `false` | `false` = persistent session: the broker queues QoS1/2 for you while offline | `true` when a stale command must never run late |
+| `SessionExpirySeconds` | auto | MQTT 5 session length (auto: 1 day when `CleanSession=false`, 0 when `true`) | Shorter/longer offline queueing window |
 | `KeepAliveSeconds` | `30` | Broker ping interval | Increase for poor networks (max 65535) |
+| `PublishTimeoutSeconds` | `15` | Max wait for one QoS1/2 acknowledgement | Slow links |
+
+> **Before 1.1.0** `CleanSession=false` had **no effect** on MQTT 5 (MQTTnet's default session expiry is 0), so nothing
+> was queued while offline. 1.1.0 sets the expiry explicitly. Use a **stable** `ClientId` with a persistent session.
 
 ### TLS
 
@@ -190,12 +216,17 @@ Copy this into your `appsettings.json` and edit the values. Every option is show
 |---|---|---|---|
 | `Tls.Enabled` | `false` | Turn on TLS | If broker is on port 8883 |
 | `Tls.Mode` | `None` | Cert validation strategy | See below |
-| `Tls.TrustedThumbprint` | `""` | Certificate SHA1/SHA256 | Only when `Mode = "Hard"` |
+| `Tls.TrustedThumbprint` | `""` | Certificate thumbprint (spaces/colons ignored) | Only when `Mode = "Hard"` |
+| `Tls.CaCertificatePath` | `""` | CA certificate (PEM/DER) | Only when `Mode = "Ca"` |
+| `Tls.CheckCertificateName` | `true` | Cert name must match the host | `Mode = "Ca"`; turn off only for IP-based lab brokers |
+| `Tls.ClientCertificatePath` / `Password` | `""` | Client cert + key (PFX) for **mutual TLS** | Broker requires client certificates |
+| `Tls.ClientCertificateThumbprint` / `Store` | `""` / `LocalMachine` | Client cert from the OS certificate store | Mutual TLS without a file |
 
 **TLS Mode options:**
-- `"None"` — system default cert validation. Most secure, requires valid CA chain.
-- `"Normal"` — accept any cert. Fine for dev / internal LAN where you trust the network.
-- `"Hard"` — pin a specific cert thumbprint. Most secure for IoT / production with self-signed certs.
+- `"None"` — system default cert validation. Most secure, requires a public / domain-trusted CA chain.
+- `"Normal"` — accept any cert. Dev / internal LAN only (logs a warning, event 1601).
+- `"Hard"` — pin a specific cert thumbprint. Good for self-signed certs; must be updated when the cert is renewed.
+- `"Ca"` — trust your own CA (`CaCertificatePath`): full chain validation, survives cert renewal. Best for private PKI.
 
 ### Last Will & Testament (LWT)
 
@@ -235,9 +266,10 @@ Copy this into your `appsettings.json` and edit the values. Every option is show
 |---|---|---|
 | `HealthCheck.Enabled` | `true` | Periodic ping to detect zombie connections |
 | `HealthCheck.IntervalMinutes` | `1` | How often to check |
-| `HealthCheck.IdleThresholdMinutes` | `2` | Only ping if channel has been quiet this long |
+| `HealthCheck.IdleThresholdMinutes` | `2` | Only ping if nothing was **received** for this long |
+| `HealthCheck.PingTimeoutSeconds` | `10` | No reply in time → the connection is reset and re-established |
 
-**Why this exists:** TCP sockets can stay "open" for hours after the network died (NAT timeout, etc.). Health check pings detect this and trigger reconnect.
+**Why this exists:** TCP sockets can stay "open" for hours after the network died (NAT timeout, etc.). Health check pings detect this and reset the connection. Since 1.1.0 only *inbound* traffic counts as "alive" — a QoS0 publish succeeds even on a dead socket, so a client that only publishes is still checked.
 
 ### Reconnect
 
@@ -247,8 +279,20 @@ Copy this into your `appsettings.json` and edit the values. Every option is show
 | `Reconnect.BaseDelaySeconds` | `1` | Initial retry delay |
 | `Reconnect.MaxDelaySeconds` | `60` | Cap on exponential backoff |
 | `Reconnect.UseJitter` | `true` | Randomize delays to prevent thundering-herd |
+| `Reconnect.ConnectTimeoutSeconds` | `15` | Max wait for one connect (also bounds subscribe/unsubscribe) |
+| `Reconnect.StillDownAfterSeconds` | `120` | Raise `StillDown` once per outage after this long (0 = off) |
+| `Reconnect.AuthRejectedDelaySeconds` | `0` | After a refused sign-in, wait at least this long before retrying (0 = normal backoff) |
 
 **Always leave `UseJitter = true`** if you have multiple clients reconnecting after a broker recovery.
+
+### Dispatch
+
+| Option | Default | What it does |
+|---|---|---|
+| `Dispatch.Mode` | `Inline` | `Inline` = handlers run in order on the receive loop (keep them fast). `Concurrent` = off the loop, a slow handler can't stall the connection |
+| `Dispatch.MaxConcurrency` | `8` | Concurrent: handlers running at once |
+| `Dispatch.ShutdownWaitSeconds` | `5` | Concurrent: wait for running handlers on dispose |
+| `Dispatch.MaxPending` | `1000` | Concurrent: waiting handler calls before intake is slowed (back-pressure) |
 
 ---
 
@@ -665,6 +709,8 @@ mqtt.OnDisconnected += async () =>
 - Broker closes the connection
 - Graceful shutdown (you called `DisconnectAsync`)
 
+**Does not fire** for each failed reconnect attempt (it did before 1.1.0) — once per real drop.
+
 ### Multiple subscribers
 
 You can hook the same event from multiple components — all run sequentially, exceptions in one don't affect others:
@@ -695,6 +741,43 @@ public class MyComponent : IDisposable
     }
 }
 ```
+
+### Why did it disconnect? — failure reasons *(1.1.0)*
+
+```csharp
+mqtt.ConnectionLost += a =>                       // once per real drop
+{
+    logger.LogWarning("MQTT lost after {Up}: {Kind} — {Detail}", a.WasConnectedFor, a.Failure.Kind, a.Failure.Detail);
+    return Task.CompletedTask;
+};
+mqtt.ConnectionRestored += a =>                   // after an outage
+{
+    logger.LogInformation("MQTT back after {Down} ({Attempts} attempts)", a.Downtime, a.Attempts);
+    return Task.CompletedTask;
+};
+
+// Any time:
+var why  = mqtt.LastFailure?.Kind;                // AuthRejected / TlsFailure / BrokerUnavailable / Network / Timeout / SessionTakenOver / ProtocolError / Unknown
+var info = mqtt.ConnectionInfo;                   // state, since/down-since, attempts, flap counter, buffered, refused subs, denied publishes
+```
+
+Decide on the kind: `Network` / `Timeout` recover on their own; `AuthRejected`, `TlsFailure`, `ProtocolError`,
+`SessionTakenOver` need a person or a config change — retrying or restarting won't help.
+
+### Wait for the connection
+
+```csharp
+var up = await mqtt.WaitForConnectionAsync(TimeSpan.FromSeconds(30));   // true = connected AND subscriptions restored + OnConnected done
+```
+
+### Delivery semantics
+
+- QoS1 is **at-least-once**: a message can arrive twice around a reconnect — make handlers idempotent.
+- A resumed session's queue that arrives before your `OnConnected` subscribed is held and delivered afterwards, in order,
+  and acknowledged only after delivery (redelivered by the broker if the app stops first). Subscribing **before**
+  `ConnectAsync`/`AddAutoStart` avoids holding altogether.
+- `Concurrent` dispatch acknowledges a QoS1 message when it is handed to the thread pool (MQTT needs in-order acks); a
+  crash while that handler runs loses it. Use `Inline` where that matters.
 
 ### Fine-grained state tracking
 
@@ -1002,6 +1085,11 @@ public class StatusViewModel : INotifyPropertyChanged
 
 ## 15. What to do when things break
 
+### First: read the reason
+
+`mqtt.LastFailure` (or the log line `Connect failed — <Kind>: <detail>`, event 1002/1003) names the cause:
+`AuthRejected`, `TlsFailure`, `BrokerUnavailable`, `Network`, `Timeout`, `SessionTakenOver`, `ProtocolError`.
+
 ### Symptom: "NotAuthorized" repeatedly
 
 1. **Verify credentials** with an MQTT GUI tool (MQTT Explorer) — same username/password
@@ -1009,6 +1097,7 @@ public class StatusViewModel : INotifyPropertyChanged
 3. **Check `appsettings.json` is in the publish folder** (look in `bin/Release/.../publish/`)
 4. **Drop in the config-verify snippet** (section 13) — see what values actually loaded
 5. **Check `ClientId` isn't colliding** with another instance
+6. Retrying can't fix credentials — set `Reconnect.AuthRejectedDelaySeconds` (e.g. 300) so a whole fleet doesn't hammer the broker
 
 ### Symptom: Connects but messages don't arrive
 
@@ -1016,6 +1105,7 @@ public class StatusViewModel : INotifyPropertyChanged
 2. **TopicPrefix mismatch** — see [section 12 of README.md](README.md#12-topic-prefix-behaviour)
 3. **Wildcard mistake** — `+` = one level, `#` = many (must be last)
 4. **QoS 0 on lossy network** — try `AtLeastOnce`
+5. **Refused by the broker ACL** — look for event 1102 "Subscription REFUSED" / `ConnectionInfo.RejectedSubscriptions` (and 1202 / `Denied` for publishes)
 
 ### Symptom: TLS handshake fails
 
@@ -1025,10 +1115,12 @@ public class StatusViewModel : INotifyPropertyChanged
    openssl s_client -connect broker:8883 | openssl x509 -fingerprint -noout
    ```
 3. Some brokers need SNI — that's automatic in MQTTnet 5.x
+4. Private CA? Use `Mode = "Ca"` + `CaCertificatePath`. Broker wants client certs? Set `ClientCertificatePath` or `ClientCertificateThumbprint`
+5. `LastFailure.Detail` says "TLS on a non-TLS port?" when TLS hit a plain listener (wrong port)
 
 ### Symptom: Constant reconnect loop
 
-1. Two clients with same `ClientId` kick each other off forever — make sure ClientId is unique
+1. Two clients with same `ClientId` kick each other off forever — make sure ClientId is unique (`LastFailure.Kind == SessionTakenOver` on MQTT 5; `ConnectionInfo.TotalConnects` climbing fast)
 2. Broker session limits (max connections per user) — check broker logs
 3. Network MTU issues on cellular — increase `KeepAliveSeconds`
 
@@ -1062,7 +1154,7 @@ Trimming uses static analysis to strip "unused" code. Configuration binding uses
 
 ### Fix
 
-The library ships with an `ILLink.Descriptors.xml` embedded resource that tells the trimmer NOT to strip the options classes. You shouldn't normally hit this — but if you do, in your **own** `.csproj`:
+The library ships with an `ILLink.Descriptors.xml` embedded resource that tells the trimmer NOT to strip the options classes (including `DispatchOptions`, added in 1.1.0). You shouldn't normally hit this — but if you do, in your **own** `.csproj`:
 
 ```xml
 <ItemGroup>
@@ -1120,6 +1212,20 @@ protected override Task ExecuteAsync(CancellationToken ct)
 
 **Breaking changes:** none. Both patterns work; the new one is just better.
 
+### Upgrading 1.0.x → 1.1.0
+
+No code changes are required. Behaviour that changes (all of it documented-behaviour fixes):
+
+- **`CleanSession=false` now really keeps a session** on MQTT 5 (1 day by default) — set `SessionExpirySeconds: 0` to
+  keep the old effective behaviour, or `CleanSession: true` if nothing should be queued while offline.
+- `OnDisconnected` fires once per real drop (not per failed retry).
+- Re-subscribing to an already-active filter (e.g. from `OnConnected`) no longer sends a second SUBSCRIBE, so retained
+  messages are not delivered twice.
+- A broker-refused QoS1/2 publish is logged and returns `Denied` instead of counting as a success.
+- Clients that only publish QoS0 now get a small health ping every `IdleThresholdMinutes`.
+- The raw MQTTnet `IMqttClient` is no longer registered in your DI container.
+- `ValidateOnStart()` reports one clear message per problem.
+
 ---
 
 ## 18. Quick reference cheat sheet
@@ -1151,12 +1257,18 @@ mqtt.OnConnected += async () =>
 
 // ── Lifecycle ────────────────────────────────────────────────────────
 mqtt.OnConnected    += async () => { /* fires every (re)connect */ };
-mqtt.OnDisconnected += async () => { /* fires every disconnect  */ };
+mqtt.OnDisconnected += async () => { /* once per real drop      */ };
 mqtt.StateChanged   += (_, s)   => { /* fine-grained states     */ };
+mqtt.ConnectionLost     += a => { /* a.Failure.Kind, a.WasConnectedFor */ return Task.CompletedTask; };
+mqtt.ConnectionRestored += a => { /* a.Downtime, a.Attempts          */ return Task.CompletedTask; };
 
 // ── State checks ─────────────────────────────────────────────────────
 if (mqtt.IsConnected) { /* ... */ }
 var state = mqtt.State;   // Disconnected / Connecting / Connected / Reconnecting / ShuttingDown
+var why   = mqtt.LastFailure?.Kind;                                   // why it is down
+var info  = mqtt.ConnectionInfo;                                      // full snapshot
+var up    = await mqtt.WaitForConnectionAsync(TimeSpan.FromSeconds(30));
+var sent  = await mqtt.PublishWithResultAsync("cmd", x);             // Sent / Buffered / Dropped / Denied
 
 // ── Manual control (rare — AddAutoStart handles this) ────────────────
 await mqtt.ConnectAsync();

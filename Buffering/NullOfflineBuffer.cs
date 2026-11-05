@@ -25,7 +25,7 @@ namespace ResilientMqtt.Buffering
 
         public InMemoryOfflineBuffer(int maxSize, ILogger logger)
         {
-            _maxSize = maxSize;
+            _maxSize = Math.Max(1, maxSize);
             _logger = logger;
         }
 
@@ -36,7 +36,8 @@ namespace ResilientMqtt.Buffering
             while (_queue.Count >= _maxSize)
             {
                 if (_queue.TryDequeue(out _))
-                    _logger.LogWarning("[ResilientMqtt] Offline buffer full ({Max}) — oldest dropped", _maxSize);
+                    _logger.LogWarning(ResilientMqttLogEvents.BufferOverflow,
+                        "[ResilientMqtt] Offline buffer full ({Max}) — oldest dropped", _maxSize);
                 else break;
             }
             _queue.Enqueue(message);

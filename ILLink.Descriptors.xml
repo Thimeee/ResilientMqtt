@@ -14,5 +14,6 @@
     <type fullname="ResilientMqtt.CircuitBreakerOptions" preserve="all" />
     <type fullname="ResilientMqtt.HealthCheckOptions" preserve="all" />
     <type fullname="ResilientMqtt.ReconnectOptions" preserve="all" />
+    <type fullname="ResilientMqtt.DispatchOptions" preserve="all" />
   </assembly>
 </linker>

@@ -1,0 +1,63 @@
+# ResilientMqtt test environment (chaos / cross-broker / load / soak).
+# All host ports are in the 188xx range so nothing clashes with a broker already running on 1883.
+#
+#   docker compose -p rmqtt-test up -d                      → Mosquitto + Toxiproxy (default)
+#   docker compose -p rmqtt-test --profile full up -d       → + EMQX + HiveMQ CE (cross-broker tests)
+#
+# Run tests/run-all.ps1 instead of calling this by hand — it generates the certificates and the password file first.
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: rmqtt-mosquitto
+    ports:
+      - "18831:1883"   # plain, username/password + ACL
+      - "18832:8883"   # TLS (server certificate)
+      - "18833:8884"   # mutual TLS (client certificate required)
+    # Files bind-mounted from Windows are not readable by the "mosquitto" user, so copy them in, create the password
+    # file inside the container (user test / password test) and hand everything to that user before starting.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mkdir -p /m &&
+        cp /cfg/mosquitto.conf /cfg/acl /certs-src/ca.pem /certs-src/server.pem /certs-src/server.key /m/ &&
+        touch /m/passwd &&
+        mosquitto_passwd -b /m/passwd test test &&
+        chown -R mosquitto:mosquitto /m /mosquitto/data &&
+        chmod 0700 /m && chmod 0600 /m/* &&
+        exec mosquitto -c /m/mosquitto.conf
+    volumes:
+      - ./mosquitto:/cfg:ro
+      - ./certs:/certs-src:ro
+      - mosquitto-data:/mosquitto/data
+    restart: "no"
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    container_name: rmqtt-toxiproxy
+    command: ["-host=0.0.0.0", "-port=8474"]
+    ports:
+      - "18474:8474"   # Toxiproxy HTTP API
+      - "18901:18901"  # → mosquitto:1883
+      - "18902:18902"  # → emqx:1883
+      - "18903:18903"  # → hivemq:1883
+    restart: "no"
+
+  emqx:
+    image: emqx/emqx:latest        # pin a version here if a future release behaves differently
+    container_name: rmqtt-emqx
+    profiles: ["full"]
+    ports:
+      - "18841:1883"
+    restart: "no"
+
+  hivemq:
+    image: hivemq/hivemq-ce:latest
+    container_name: rmqtt-hivemq
+    profiles: ["full"]
+    ports:
+      - "18851:1883"
+    restart: "no"
+
+volumes:
+  mosquitto-data:

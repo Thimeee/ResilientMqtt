@@ -78,27 +78,16 @@ namespace ResilientMqtt
             return this;
         }
 
-        /// <summary>Validate options at host startup. Recommended.</summary>
+        /// <summary>
+        /// Validate options at host startup (recommended). Every problem is reported with its own clear message
+        /// (e.g. "Tls.Mode='Ca' needs an existing Tls.CaCertificatePath").
+        /// </summary>
         public ResilientMqttBuilder ValidateOnStart()
         {
+            Services.TryAddEnumerable(
+                ServiceDescriptor.Singleton<IValidateOptions<ResilientMqttOptions>, ResilientMqttOptionsValidator>());
             Services
                 .AddOptions<ResilientMqttOptions>()
-                .Validate(o =>
-                {
-                    if (string.IsNullOrWhiteSpace(o.Host)) return false;
-                    if (o.Port <= 0 || o.Port > 65535) return false;
-                    if (string.IsNullOrWhiteSpace(o.ClientId)) return false;
-                    if (o.Tls.Enabled && o.Tls.Mode == "Hard" && string.IsNullOrWhiteSpace(o.Tls.TrustedThumbprint))
-                        return false;
-                    // Timeout knobs must be positive; StillDown may be 0 (disabled).
-                    if (o.PublishTimeoutSeconds <= 0) return false;
-                    if (o.Reconnect.ConnectTimeoutSeconds <= 0) return false;
-                    if (o.Reconnect.StillDownAfterSeconds < 0) return false;
-                    if (o.HealthCheck.PingTimeoutSeconds <= 0) return false;
-                    return true;
-                }, "Invalid ResilientMqtt configuration. Check Host, Port, ClientId, Tls, and the timeout " +
-                   "options (ConnectTimeoutSeconds/PublishTimeoutSeconds/PingTimeoutSeconds must be > 0, " +
-                   "StillDownAfterSeconds >= 0).")
                 .ValidateOnStart();
             return this;
         }
@@ -135,8 +124,8 @@ namespace ResilientMqtt
             // Default options if no Configure call is made
             services.AddOptions<ResilientMqttOptions>();
 
-            // MQTTnet client (singleton)
-            services.TryAddSingleton(_ => new MqttClientFactory().CreateMqttClient());
+            // (#34) The MQTTnet client is created privately for our client below — it is NOT registered as a
+            // global IMqttClient, so it can't collide with a host that uses MQTTnet directly.
 
             // Retry strategy
             services.TryAddSingleton<IRetryStrategy>(sp =>
@@ -190,9 +179,15 @@ namespace ResilientMqtt
                     loggerFactory.CreateLogger("ResilientMqtt.CircuitBreaker"));
             });
 
-            // Main client — register OUR interface mapping to OUR implementation.
-            // (The underlying MQTTnet IMqttClient is already registered at line 128.)
-            services.TryAddSingleton<IResilientMqttClient, ResilientMqttClient>();
+            // Main client — owns its own MQTTnet client (#34).
+            services.TryAddSingleton<IResilientMqttClient>(sp => new ResilientMqttClient(
+                new MqttClientFactory().CreateMqttClient(),
+                sp.GetRequiredService<IOptions<ResilientMqttOptions>>(),
+                sp.GetRequiredService<IRetryStrategy>(),
+                sp.GetRequiredService<IHealthCheck>(),
+                sp.GetRequiredService<IOfflineBuffer>(),
+                sp.GetRequiredService<ICircuitBreaker>(),
+                sp.GetRequiredService<ILogger<ResilientMqttClient>>()));
 
             return new ResilientMqttBuilder(services);
         }

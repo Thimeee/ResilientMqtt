@@ -24,15 +24,17 @@ ResilientMqtt aims to become a production-ready, enterprise-grade MQTT client ec
 - Logging
 - Configuration options
 
-### v1.1 – Core Polish
-- Statistics API
-- ConnectionInfo API
-- WaitForConnectionAsync()
-- PingAsync()
-- FlushAsync()
-- Better exceptions
-- Performance improvements
-- Documentation improvements
+### v1.1 – Core Polish  ✅ shipped 2026-10-02 (see CHANGELOG)
+- ✅ ConnectionInfo API (`ConnectionInfo` snapshot incl. counters — the "Statistics" core)
+- ✅ WaitForConnectionAsync()
+- ✅ Better exceptions → classified failure reasons (`LastFailure`, `ConnectionLost` / `ConnectionRestored`)
+- ✅ Publish outcomes (`PublishWithResultAsync`), refused subscribe/publish detection
+- ✅ MQTT 5 sessions done right (`ProtocolVersion`, `SessionExpirySeconds`)
+- ✅ Mutual TLS + private-CA trust, concurrent dispatch, auth-failure backoff, log EventIds
+- ✅ Test suite (unit + in-process broker integration)
+- ✅ Documentation corrected
+- ⏭ Moved to v1.2: PingAsync() (public), FlushAsync(), full Statistics (message rates), durable offline-buffer
+  providers (SQLite/Redis), credential provider / hot reload, multiple broker endpoints, named multiple clients
 
 ### v1.2 – API Stabilisation
 - API freeze
@@ -62,7 +64,7 @@ ResilientMqtt aims to become a production-ready, enterprise-grade MQTT client ec
 | Version | Focus |
 |----------|-------|
 | 1.0 | Stable Core |
-| 1.1 | Core Polish |
+| 1.1 | Core Polish ✅ |
 | 1.2 | Stable API |
 | 1.3 | Dynamic Security |
 | 1.4 | OpenTelemetry |
