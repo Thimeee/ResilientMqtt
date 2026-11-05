@@ -94,6 +94,11 @@ independent code reviews of the 1.1.0 diff itself, after the owner asked "are yo
     bounded. **#61/#62** simpler back-pressure (one semaphore, no polling) and one shared TLS-mode parser.
   - **#67** `DisconnectAsync` / dispose now abort an in-flight connect at once (it used to wait for `ConnectTimeout`
     when the caller passed no token).
+  - **#68 (`rc.2`) Publish failures could flood the log:** while a link stalled, every failed publish wrote one ERROR
+    with a stack trace (130 in a 4-minute soak). `PublishFailed` (1201) is now logged at most once a minute and says
+    how many were skipped; new event **1205 `PublishFailuresNotLogged`** reports the rest once publishing works again.
+    Only the log line is limited: buffering and outcomes are unchanged. To measure failures, use the outcomes, not a
+    count of 1201 events.
 - **(#32) Polish:** "Publish failed — buffering" was logged even with the buffer off (the message was dropped); a
   caller-cancelled publish counted as a broker failure; `StateChanged` exceptions were swallowed without a log;
   validation now covers `MaxSize`, `KeepAliveSeconds`, `MaxDelay >= BaseDelay` and every new option.
@@ -122,7 +127,7 @@ independent code reviews of the 1.1.0 diff itself, after the owner asked "are yo
   hole, reset, cut, slow link, fragmentation), cross-broker (Mosquitto / EMQX / HiveMQ), Mosquitto auth / ACL / TLS /
   mutual TLS / restart / 3.1.1 Will (`ResilientMqtt.ChaosTests`, 36 tests), a 500-client reconnect storm (network cut +
   broker restart) and a multi-hour soak with rotating faults and QoS1 gap / leak checks (`ResilientMqtt.LoadTest`).
-- **Tests:** `tests/ResilientMqtt.Tests` — 138 unit + integration tests (in-process MQTTnet broker, real sockets:
+- **Tests:** `tests/ResilientMqtt.Tests` — 142 unit + integration tests (in-process MQTTnet broker, real sockets:
   refused sign-in, closed port, silent broker, sessions, takeover, ACL refusals, retained messages, zombie detection
   through a freezable proxy, lost wake-up, dispatch modes, breaker, graceful status, TLS CA validation, resumed-session
   queue delivery + order, offline unsubscribe, TLS end to end incl. mutual TLS, back-pressure, shutdown races).

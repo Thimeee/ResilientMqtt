@@ -700,7 +700,7 @@ Every log line carries a stable `EventId` (class `ResilientMqttLogEvents`) so yo
 |-------|------|---------|
 | 1000 | connection | 1001 Connected · 1002 ConnectFailed · 1003 ConnectTimedOut · 1004 ConnectionLost · 1005 ReconnectScheduled · 1006 StillDown · 1007 DisconnectedGracefully · 1009 ConnectionRestored |
 | 1100 | subscriptions | 1101 Subscribed · **1102 SubscriptionRefused** · 1103 Resubscribing · 1105 SubscribeFailed |
-| 1200 | publish | 1201 PublishFailed · **1202 PublishDenied** · 1204 PublishBlockedCircuitOpen |
+| 1200 | publish | 1201 PublishFailed · **1202 PublishDenied** · 1204 PublishBlockedCircuitOpen · 1205 PublishFailuresNotLogged |
 | 1300 | offline buffer | 1301 BufferDraining · 1302 BufferDrainFailed · 1303 BufferOverflow |
 | 1400 | health check | 1401 HealthClientDisconnected · 1402 HealthPingFailed · 1403 HealthForcedReconnect |
 | 1500 | handlers | 1501 HandlerThrew · 1502 EventHandlerThrew · 1503 MessageUnmatched · 1504 HeldMessagesReplayed · 1505 DispatchBackPressure |
@@ -709,7 +709,7 @@ Every log line carries a stable `EventId` (class `ResilientMqttLogEvents`) so yo
 
 ### Test coverage — what is proven and what is not *(honest list)*
 
-**Proven by the test suite (138 tests, `dotnet test tests/ResilientMqtt.Tests`)** — real sockets against an in-process
+**Proven by the test suite (142 tests, `dotnet test tests/ResilientMqtt.Tests`)** — real sockets against an in-process
 MQTTnet broker: refused sign-in (+ no `OnDisconnected` per attempt), closed port, silent broker (connect timeout),
 persistent vs clean sessions on MQTT 5 and 3.1.1, `SessionTakenOver`, ACL-refused subscribe / QoS1 publish, publish
 outcomes, idempotent subscribe + no retained replay on a resumed session, zombie detection on MQTT 5 and 3.1.1 (incl.

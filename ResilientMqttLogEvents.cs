@@ -28,6 +28,7 @@ namespace ResilientMqtt
         public static readonly EventId PublishFailed = new(1201, nameof(PublishFailed));
         public static readonly EventId PublishDenied = new(1202, nameof(PublishDenied));
         public static readonly EventId PublishBlockedCircuitOpen = new(1204, nameof(PublishBlockedCircuitOpen));
+        public static readonly EventId PublishFailuresNotLogged = new(1205, nameof(PublishFailuresNotLogged));
 
         public static readonly EventId BufferDraining = new(1301, nameof(BufferDraining));
         public static readonly EventId BufferDrainFailed = new(1302, nameof(BufferDrainFailed));

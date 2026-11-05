@@ -88,7 +88,13 @@ namespace ResilientMqtt
         // so the broker redelivers it on the next session.
         private readonly SemaphoreSlim _heldSlots;
         private int _dispatchBackPressureLogged;
-        private const int MaxDeniedTopicsTracked = 1000;
+        internal const int MaxDeniedTopicsTracked = 1000;
+        internal int DeniedTopicsTracked => _deniedLogTicks.Count;
+
+        // #68 — one PublishFailed ERROR per window; the rest are counted. Settable so tests don't wait a minute.
+        internal TimeSpan PublishFailureLogWindow { get; set; } = TimeSpan.FromMinutes(1);
+        private long _publishFailureLoggedTicks;
+        private long _publishFailuresNotLogged;
 
         private static readonly JsonSerializerOptions JsonOpts = new()
         {
@@ -640,6 +646,7 @@ namespace ResilientMqtt
                         RecordDenied(message.Topic, result.ReasonCode.ToString(), result.ReasonString);
                         return ResilientMqttPublishOutcome.Denied;
                     }
+                    ReportPublishFailuresNotLogged();
                     return ResilientMqttPublishOutcome.Sent;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -651,10 +658,7 @@ namespace ResilientMqtt
                     // A timed-out publish (OperationCanceledException) is treated exactly like a failed one.
                     if (!bypassBreaker) { verdict = true; _breaker.RecordFailure(); }
                     var outcome = Keep(message, allowBuffer);
-                    _logger.LogError(ResilientMqttLogEvents.PublishFailed, ex,
-                        "[ResilientMqttClient] Publish failed — {Outcome}. Topic: {Topic}",
-                        outcome == ResilientMqttPublishOutcome.Buffered ? "buffered for retry" : "message dropped (offline buffer disabled)",
-                        message.Topic);
+                    LogPublishFailure(ex, message.Topic, outcome);
                     return outcome;
                 }
                 finally
@@ -670,6 +674,35 @@ namespace ResilientMqtt
 
         private ResilientMqttPublishOutcome Keep(MqttApplicationMessage message, bool allowBuffer)
             => allowBuffer && _buffer.TryEnqueue(message) ? ResilientMqttPublishOutcome.Buffered : ResilientMqttPublishOutcome.Dropped;
+
+        // #68 — when the link stalls every publish fails. Log the first per window (with the exception) and count the
+        // rest, so a fleet in trouble doesn't fill its disks. Only the log line is limited, never the buffering.
+        private void LogPublishFailure(Exception ex, string topic, ResilientMqttPublishOutcome outcome)
+        {
+            var now = Now.Ticks;
+            var last = Interlocked.Read(ref _publishFailureLoggedTicks);
+            if (now - last < PublishFailureLogWindow.Ticks
+                || Interlocked.CompareExchange(ref _publishFailureLoggedTicks, now, last) != last)
+            {
+                Interlocked.Increment(ref _publishFailuresNotLogged);
+                return;
+            }
+
+            var skipped = Interlocked.Exchange(ref _publishFailuresNotLogged, 0);
+            _logger.LogError(ResilientMqttLogEvents.PublishFailed, ex,
+                "[ResilientMqttClient] Publish failed — {Outcome}. Topic: {Topic}{Skipped}",
+                outcome == ResilientMqttPublishOutcome.Buffered ? "buffered for retry" : "message dropped (offline buffer disabled)",
+                topic, skipped > 0 ? $" ({skipped} more since the last report)" : string.Empty);
+        }
+
+        private void ReportPublishFailuresNotLogged()
+        {
+            if (Interlocked.Read(ref _publishFailuresNotLogged) == 0) return;
+            var skipped = Interlocked.Exchange(ref _publishFailuresNotLogged, 0);
+            if (skipped > 0)
+                _logger.LogInformation(ResilientMqttLogEvents.PublishFailuresNotLogged,
+                    "[ResilientMqttClient] Publishing works again — {Count} more publish failure(s) were not logged individually.", skipped);
+        }
 
         private void RecordDenied(string topic, string code, string? reason)
         {

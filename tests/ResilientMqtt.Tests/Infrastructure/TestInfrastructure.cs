@@ -327,6 +327,7 @@ namespace ResilientMqtt.Tests.Infrastructure
         public IMqttClient Inner { get; } = inner;
         public Func<MqttClientOptions, CancellationToken, Task<MqttClientConnectResult>>? ConnectOverride { get; set; }
         public Func<MqttClientSubscribeOptions, CancellationToken, Task<MqttClientSubscribeResult>>? SubscribeOverride { get; set; }
+        public Func<MqttApplicationMessage, CancellationToken, Task<MqttClientPublishResult>>? PublishOverride { get; set; }
 
         public bool IsConnected => Inner.IsConnected;
         public MqttClientOptions Options => Inner.Options;
@@ -343,7 +344,8 @@ namespace ResilientMqtt.Tests.Infrastructure
             => SubscribeOverride is { } o ? o(options, cancellationToken) : Inner.SubscribeAsync(options, cancellationToken);
         public Task DisconnectAsync(MqttClientDisconnectOptions options, CancellationToken cancellationToken = default) => Inner.DisconnectAsync(options, cancellationToken);
         public Task PingAsync(CancellationToken cancellationToken = default) => Inner.PingAsync(cancellationToken);
-        public Task<MqttClientPublishResult> PublishAsync(MqttApplicationMessage applicationMessage, CancellationToken cancellationToken = default) => Inner.PublishAsync(applicationMessage, cancellationToken);
+        public Task<MqttClientPublishResult> PublishAsync(MqttApplicationMessage applicationMessage, CancellationToken cancellationToken = default)
+            => PublishOverride is { } o ? o(applicationMessage, cancellationToken) : Inner.PublishAsync(applicationMessage, cancellationToken);
         public Task SendEnhancedAuthenticationExchangeDataAsync(MqttEnhancedAuthenticationExchangeData data, CancellationToken cancellationToken = default) => Inner.SendEnhancedAuthenticationExchangeDataAsync(data, cancellationToken);
         public Task<MqttClientUnsubscribeResult> UnsubscribeAsync(MqttClientUnsubscribeOptions options, CancellationToken cancellationToken = default) => Inner.UnsubscribeAsync(options, cancellationToken);
         public void Dispose() => Inner.Dispose();
