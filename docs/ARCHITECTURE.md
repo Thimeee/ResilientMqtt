@@ -20,6 +20,14 @@
 - Topic prefix
 - Configuration
 - Logging
+- Failure classification (why a connection failed)
+- MQTT 5 / 3.1.1 sessions
+- Hold + in-order replay of a resumed session's queue
+- Handler dispatch (inline or concurrent, with back-pressure)
+- TLS (thumbprint, private CA, mutual TLS)
+- Bounded logging
+
+Details of the 1.1.0 additions: [RELEASE-1.1.0](RELEASE-1.1.0.md).
 
 ## Extension Packages
 

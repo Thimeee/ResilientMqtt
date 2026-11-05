@@ -90,12 +90,12 @@ from `appsettings.json`. Core stays dependency-free; durable backends ship as ex
 
 | Feature | Why | Design sketch | Priority · Target |
 |---------|-----|---------------|-------------------|
-| ✅ **Statistics / ConnectionInfo API** — *core shipped in 1.1.0 (`ConnectionInfo`, `LastFailure`); message-rate counters + `OnStatistics` hook still open* | Fleet ops: surface per-kiosk MQTT health on the server. Pairs with the 1.0.3 `StillDown` signal. | A read-only `ConnectionInfo` snapshot: `State`, `LastConnectedUtc`, `ReconnectCount`, `CurrentBackoff`, `BufferedCount`, `PublishedTotal`, `DroppedTotal`, `LastError`. Expose via a property + an `OnStatistics` sampling hook. | HIGH · 1.1 |
-| ✅ **`WaitForConnectionAsync(timeout)`** — *shipped 1.1.0* | Await "connected" instead of polling `IsConnected`; natural home for callers that must block until ready. | `Task<bool> WaitForConnectionAsync(TimeSpan timeout, CancellationToken ct)`; completes on the next Connected transition or times out. | MED · 1.1 |
+| ✅ **Statistics / ConnectionInfo API** — *core in 1.1.0 (release candidate) (`ConnectionInfo`, `LastFailure`); message-rate counters + `OnStatistics` hook still open* | Fleet ops: surface per-kiosk MQTT health on the server. Pairs with the 1.0.3 `StillDown` signal. | A read-only `ConnectionInfo` snapshot: `State`, `LastConnectedUtc`, `ReconnectCount`, `CurrentBackoff`, `BufferedCount`, `PublishedTotal`, `DroppedTotal`, `LastError`. Expose via a property + an `OnStatistics` sampling hook. | HIGH · 1.1 |
+| ✅ **`WaitForConnectionAsync(timeout)`** — *in 1.1.0 (release candidate)* | Await "connected" instead of polling `IsConnected`; natural home for callers that must block until ready. | `Task<bool> WaitForConnectionAsync(TimeSpan timeout, CancellationToken ct)`; completes on the next Connected transition or times out. | MED · 1.1 |
 | **`FlushAsync(timeout)`** | Drain the buffer on demand (e.g. before a planned shutdown) rather than relying on the background drain. | Force a bounded drain pass; return when empty or timed out. | MED · 1.1 |
-| ✅ **Subscribe/Unsubscribe timeout** — *shipped 1.1.0 (bounded by `ConnectTimeoutSeconds`)* | The last remaining unbounded await — the SUBACK wait in `SubscribeAsync`/`ResubscribeAllAsync`. Low risk (runs right after a successful connect) but closes the gap. | Bound with `WithTimeout` using a new `SubscribeTimeoutSeconds` (default 15); a timed-out resubscribe is logged and retried on the next reconnect. | MED · 1.0.4 |
+| ✅ **Subscribe/Unsubscribe timeout** — *in 1.1.0 (release candidate) (bounded by `ConnectTimeoutSeconds`)* | The last remaining unbounded await — the SUBACK wait in `SubscribeAsync`/`ResubscribeAllAsync`. Low risk (runs right after a successful connect) but closes the gap. | Bound with `WithTimeout` using a new `SubscribeTimeoutSeconds` (default 15); a timed-out resubscribe is logged and retried on the next reconnect. | MED · 1.0.4 |
 | **OpenTelemetry / metrics hook** | Standardised metrics + traces for enterprise monitoring. | Extension package `ResilientMqtt.OpenTelemetry` (already on the roadmap) emitting from the Statistics surface above. | LOW · 1.4 |
-| ✅ **Opt-in non-blocking handler dispatch** — *shipped 1.1.0 as `Dispatch.Mode = Concurrent` (bounded by `MaxConcurrency`)* | Guard against a consumer writing a slow message handler that blocks the receive pump (#8 foot-gun). | `OfflineBuffer`-style option `Dispatch = Inline | Background`; `Background` runs each handler on `Task.Run` (delivery becomes fire-and-forget — document it). | LOW · 1.1 |
+| ✅ **Opt-in non-blocking handler dispatch** — *in 1.1.0 (release candidate) as `Dispatch.Mode = Concurrent` (bounded by `MaxConcurrency`)* | Guard against a consumer writing a slow message handler that blocks the receive pump (#8 foot-gun). | `OfflineBuffer`-style option `Dispatch = Inline | Background`; `Background` runs each handler on `Task.Run` (delivery becomes fire-and-forget — document it). | LOW · 1.1 |
 
 ---
 
@@ -105,7 +105,7 @@ from `appsettings.json`. Core stays dependency-free; durable backends ship as ex
 |------|-------|-------------|----------|
 | **Health check cadence** | `IntervalMinutes` / `IdleThresholdMinutes` (whole minutes) | Add `IntervalSeconds` / `IdleThresholdSeconds` for finer zombie-detection on critical links (keep minute options for back-compat). Beware ping load × fleet size. | LOW |
 | **Reconnect backoff** | fixed base/max/jitter | Optional `MaxAttempts` (0 = infinite, the correct default for kiosks) for consumers that *want* to give up; expose `CurrentBackoff` via ConnectionInfo. | LOW |
-| ✅ **Logging** — *shipped 1.1.0 (`ResilientMqttLogEvents`)* | string messages, `[ResilientMqtt…]` prefix | Structured `EventId`s per event class (Connected/Reconnect/PublishFailed/…) for precise filtering. | LOW |
+| ✅ **Logging** — *in 1.1.0 (release candidate) (`ResilientMqttLogEvents`)* | string messages, `[ResilientMqtt…]` prefix | Structured `EventId`s per event class (Connected/Reconnect/PublishFailed/…) for precise filtering. | LOW |
 | **Graceful shutdown** | publishes OFFLINE then DISCONNECT | Optional bounded `FlushAsync` on `DisconnectAsync` so buffered messages get a last chance to drain before close. | LOW |
 
 ---
@@ -123,7 +123,7 @@ Keeping the core small — these stay out unless a concrete need appears:
 
 ## Suggested release order
 
-1. ✅ **1.1.0 (2026-10-02)** — failure reasons + ConnectionInfo + `WaitForConnectionAsync` + subscribe timeout + sessions
+1. 🧪 **1.1.0 (release candidates; final not released)** — failure reasons + ConnectionInfo + `WaitForConnectionAsync` + subscribe timeout + sessions
    done right + mutual TLS/CA + concurrent dispatch + publish outcomes + EventIds + test suite (see CHANGELOG).
 2. **1.2** — `FlushAsync`, message-rate statistics, buffering provider model (core: `Channel` backend,
    `Provider`/`OverflowPolicy` options, `IAsyncOfflineBuffer`), credential provider / hot reload.

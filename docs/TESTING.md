@@ -17,10 +17,12 @@
 | 1.1.0 (investigation) | Probe apps against a **real** Mosquitto, the MQTTnet 5 source, live fleet logs | Findings #19–#42 |
 | 1.1.0 (second look) | The owner asked "are you sure nothing is left?" — another review | #43, #44 (queued commands could be **lost**) |
 | 1.1.0 (honesty pass) | TLS end-to-end tests + **two independent code reviews** of the diff | #45–#66 (held messages acked too early, replay across connections, PUBACK order, V311 Will, shutdown races…) |
+| 1.1.0-rc.3 | First full review of a campaign, then a search for the same class of bug | #68–#71 (log lines repeating once per message); the package trap in [STATUS](STATUS.md#how-to-release) |
 | 1.1.0-rc.1 | Fault injection, then a **Docker test kit** (real brokers, network chaos, load, soak) | #67 + 6 bugs in the kit itself, found by a smoke run before the kit left this PC |
 
 **Lesson:** reading code finds some bugs; *running* it under real failures finds the rest. So the library is
-published only after the whole campaign below passes. While it runs, the package is versioned `1.1.0-rc.N`
+published as final only after the whole campaign below passes. While it runs, the package is versioned `1.1.0-rc.N`,
+and an rc may go to nuget.org as a prerelease
 (a version number already in a NuGet cache must never be re-used for different content).
 
 ---
@@ -220,7 +222,7 @@ powershell -ExecutionPolicy Bypass -File .\run-all.ps1 -Smoke          # ~15–2
 | Everything, with the full **24 h** soak | `.\run-all.ps1` | ~25 h |
 | **Soak only**, any length (e.g. 5 h, later 24 or 48 h) | `.\run-all.ps1 -SoakOnly -SoakHours 5` | 5 h + ~10 min |
 | Soak in minutes (quick experiment) | `.\run-all.ps1 -SoakOnly -SoakMinutes 30` | ~40 min |
-| Everything except the soak | `.\run-all.ps1 -SkipSoak` | ~1 h |
+| Everything except the soak | `.\run-all.ps1 -SkipSoak` | ~10 min (2026-11-05) + image downloads on the first run |
 | Mosquitto only (skip EMQX/HiveMQ) | add `-SkipFull` | |
 | Bigger / smaller storm | `-Clients 1000` · `-OutageSeconds 60` | |
 | Faults more / less often in the soak | `-FaultEveryMinutes 5` | |
@@ -269,13 +271,15 @@ memory growth shows in `soak-metrics.csv`.
 ## 9. Workflow until 1.1.0 is published
 
 ```
-rc.1 kit ──► test PC: -Smoke ──► results zip ──► review here
-                                   │ FAIL → fix → rc.2 → repeat
-                                   ▼ PASS
-            test PC: -SoakHours 5 (full) ──► review ──► -SoakOnly -SoakHours 24 ──► review
-                                   ▼ all PASS
-            Version 1.1.0 (final) → pack → owner commits + pushes branch v1.1.0 → nuget.org publish
-            → the consuming project switches from 1.1.0-rc.N to 1.1.0 and commits its Step 2c
+rc.N ──► campaign: unit, chaos, storms, short soak ──► review
+            │ FAIL → fix → rc.N+1 → repeat
+            ▼ PASS
+         rc.N published as a nuget.org PRERELEASE ──► the consuming project builds on it (Step 2c)
+            ▼
+         -SoakOnly -SoakHours 5 (not closed until it ends) ──► review ──► longer soak if wanted ──► real kiosk lab test
+            ▼ all PASS
+         Version 1.1.0 (final) → commit + tag + push → build → nuget.org publish
+         → the consuming project switches from 1.1.0-rc.N to 1.1.0; bank production only on the final
 ```
 
 Each fix found by the campaign gets a test in L1–L3 where possible, so it can never come back silently.

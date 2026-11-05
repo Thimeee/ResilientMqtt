@@ -1,9 +1,11 @@
-> 📄 **Copy** of the consuming project's `docs/ResilientMqtt-1.0.4-Plan.md` (Kiosk-Agent repository), kept here so the library's own history lives with the library. Copied 2026-10-05. Links to project files (agent / backend paths) only resolve in that repository; the project copy stays the one that is updated.
+> 📄 **Copy** of the consuming project's `docs/ResilientMqtt-1.0.4-Plan.md` (Kiosk-Agent repository), kept here so the library's own history lives with the library. Copied 2026-11-05. Links to project files (agent / backend paths) only resolve in that repository; the project copy stays the one that is updated.
 
 # ResilientMqtt 1.0.4 — Investigation & Plan
 
-> **Status (2026-10-02): LIBRARY BUILT — released as `ResilientMqtt 1.1.0`** (user decision D3: a big update → minor
-> version, not 1.0.4). Branch `v1.1.0` in the library repo (uncommitted — owner commits + pushes + publishes to nuget.org).
+> **Current state is in the library's `docs/STATUS.md`** (release candidates; final `1.1.0` not released). This page is the
+> investigation record.
+>
+> **Status (2026-10-02): library built** as `1.1.0` (user decision D3: a big update → minor version, not 1.0.4), branch `v1.1.0`.
 > 133 tests green (unit + in-process broker), verified again against the lab Mosquitto (AuthRejected, ACL refusals,
 > persistent session, SessionTakenOver). `ResilientMqtt.1.1.0.nupkg` + `.snupkg` packed. Decisions taken: D1 = 1-day
 > default session · D2 = scope as below · D4 = local package source for testing · D5 = branch created by Claude.
@@ -20,6 +22,12 @@
 > `Tls.Mode` crashing startup, and several shutdown/set-up races. Hold/replay was redesigned (per-attempt epoch, manual
 > ack in order, back-pressure). Fixes proven by running their tests against the pre-fix code. What is still NOT covered
 > by a test is listed in the library README §10a "Test coverage" (incl. load — run the lab blip test).
+> **2026-11-05 — `1.1.0-rc.3`** (`rc.2` is only a git tag, never published): campaign on the dev PC passed every stage, incl. the first EMQX + HiveMQ run and 500-client storms, with a 20-minute soak (0 gaps). The multi-hour soak is still open. Log limits for lines that repeat per message: publish failures (#68), open circuit (#69), full offline buffer (#71), each one per minute with a count; the unlogged count is reported at recovery and at shutdown (#70). New events 1205 + 1304. Missing #60 test added. 146 tests.
+> The project continues on the rc; final `1.1.0` only after the long soak passes.
+> **2026-10-05 — test campaign (`1.1.0-rc.1`):** a Docker test kit (chaos via Toxiproxy, Mosquitto/EMQX/HiveMQ, TLS/mTLS,
+> 500-client reconnect storm, multi-hour soak) — see [ResilientMqtt-Testing.md](ResilientMqtt-Testing.md). **Smoke PASS on
+> both PCs.** Full run (`-SoakHours 5`, first EMQX/HiveMQ run) in progress on the test PC; results pending. Plan: publish
+> `1.1.0-rc.1` as a nuget.org **prerelease** and continue Step 2c on it; final `1.1.0` only after the full campaign passes.
 > **Library:** `D:\Self Stady\importent\libry\.net\ResilientMqtt\latest\ResilientMqtt` · branch `v1.0.3` (clean, in sync
 > with `origin/v1.0.3`) · MQTTnet 5.1.0.1559.
 > **Why now:** v1.1.0 Step 2c (error-aware self-heal) needs the library to say *why* a connection failed. Before adding

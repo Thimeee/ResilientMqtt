@@ -901,6 +901,11 @@ grep "ResilientMqttClient" Logs/log-2026-05-13.txt
 | `Warning` | Disconnected unexpectedly, Circuit breaker OPEN, Buffer overflow, Connect rejected |
 | `Error` | Publish failed, Handler threw, Drain failed, OnConnected handler threw |
 
+**Lines that could repeat once per message are limited to one per minute**, with a count of what was skipped: publish
+failed (event 1201), publish blocked by an open circuit (1204), and offline buffer overflow (1303). The skipped count is
+reported when publishing recovers or at shutdown (1205) and when the buffer drains (1304). Only the log line is limited,
+never the behaviour. To measure failures, use `PublishWithResultAsync` outcomes rather than counting log lines.
+
 ### Tune verbosity
 
 `appsettings.json`:
@@ -1225,6 +1230,7 @@ No code changes are required. Behaviour that changes (all of it documented-behav
 - Clients that only publish QoS0 now get a small health ping every `IdleThresholdMinutes`.
 - The raw MQTTnet `IMqttClient` is no longer registered in your DI container.
 - `ValidateOnStart()` reports one clear message per problem.
+- Log lines that could repeat per message are limited to one per minute (events 1201, 1204, 1303): do not count them to measure failures.
 
 ---
 

@@ -13,12 +13,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); this project use
 
 ## [1.1.0] — 2026-10-02 *(release candidates `1.1.0-rc.N` while the test campaign runs; final after it passes)*
 
+Summary of this version: [docs/RELEASE-1.1.0.md](docs/RELEASE-1.1.0.md). Current state: [docs/STATUS.md](docs/STATUS.md).
+
 A "tell me **why**, and be truthful" release, made after a full investigation that — unlike 1.0.3 — also **ran** the
 library: probe apps against a real Mosquitto broker, the MQTTnet 5 source, and months of live fleet logs. It found
 that several behaviours the docs promised did not happen at runtime. Every one is fixed, a test suite now proves it,
 and the library gained the pieces a general-purpose client needs (failure reasons, mutual TLS, safe dispatch, publish
 outcomes). **No public member was removed or renamed**; new interface members have default implementations, so other
-`IResilientMqttClient` implementations (fakes, decorators) keep compiling. Findings are numbered #19–#66, continuing the
+`IResilientMqttClient` implementations (fakes, decorators) keep compiling. Findings are numbered #19–#71, continuing the
 1.0.3 audit (full write-up: the consuming project's `docs/ResilientMqtt-1.0.4-Plan.md`). #45–#66 came from two
 independent code reviews of the 1.1.0 diff itself, after the owner asked "are you sure nothing is left?".
 

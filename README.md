@@ -262,7 +262,7 @@ the library build and the package.
 **Full test campaign** (real brokers in Docker, network chaos, 500-client reconnect storm, multi-hour soak):
 see [`tests/README-TESTING.md`](tests/README-TESTING.md) — `tests\run-all.ps1 -Smoke` for a quick check.
 
-**Library documents:** [Testing guide](docs/TESTING.md) · [Usage](docs/USAGE.md) · [Future features](docs/FUTURE-FEATURES.md) · [Roadmap](docs/ROADMAP.md) · history of the audits: [1.0.3 research](docs/ResilientMqtt-Research.md), [1.0.3 plan](docs/ResilientMqtt-1.0.3-Plan.md), [1.1.0 investigation & findings](docs/ResilientMqtt-1.0.4-Plan.md).
+**Library documents:** [**Status: where the library stands now**](docs/STATUS.md) · [**What 1.1.0 is**](docs/RELEASE-1.1.0.md) · [Testing guide](docs/TESTING.md) · [Usage](docs/USAGE.md) · [Future features](docs/FUTURE-FEATURES.md) · [Roadmap](docs/ROADMAP.md) · history of the audits: [1.0.3 research](docs/ResilientMqtt-Research.md), [1.0.3 plan](docs/ResilientMqtt-1.0.3-Plan.md), [1.1.0 investigation & findings](docs/ResilientMqtt-1.0.4-Plan.md).
 
 ---
 
