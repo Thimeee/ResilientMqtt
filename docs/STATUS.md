@@ -1,7 +1,7 @@
 # ResilientMqtt Status: where the library stands
 
 > **Read this first when you come back to the library.** Keep it current: update it after every library change,
-> test run or release. **Last updated: 2026-11-05.**
+> test run or release. **Last updated: 2026-11-06.**
 > What changed and why: [CHANGELOG](../CHANGELOG.md). How to use it: [USAGE](USAGE.md). How it is tested: [TESTING](TESTING.md).
 
 ---
@@ -12,7 +12,7 @@
 |------|-------|
 | **Version** | `1.1.0-rc.3`, a release candidate. Final `1.1.0` is not released. |
 | **Git** | Branch `v1.1.0`, tag `v1.1.0-rc.3` = commit `763ddb3`, pushed. One branch per version. |
-| **nuget.org** | Latest listed is `1.0.3`. `rc.3` is the next to publish. |
+| **nuget.org** | `1.1.0-rc.3` published as a **prerelease** (2026-11-06). Latest stable is still `1.0.3`. |
 | **`rc.2`** | Only a git tag (`4fd0dba`, with #68 + #60). Never published. |
 | **Platform** | .NET 10, MQTTnet 5.1.0.1559. Vulnerability scan clean (`dotnet list package --vulnerable --include-transitive`, 2026-11-05). |
 | **Used by** | Kiosk Agent + Monitoring Server (`Kiosk-Agent-` repository): still on `1.0.3`, moving to the rc in its Step 2c. That project uses `CleanSession=true`. |

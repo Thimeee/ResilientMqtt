@@ -117,5 +117,5 @@ reconnect storms; a 20-minute soak with 6 faults and no message gaps.
 |---------|------|-----------|
 | `rc.1` | The rebuild, fault-injection tests, Docker test kit (git `2b08ca5`) | No |
 | `rc.2` | Publish-failure log limit (#68), test for #60 (git `4fd0dba`) | No |
-| `rc.3` | Log limits for open circuit and full buffer, count at shutdown (#69–#71) (git `763ddb3`) | Not yet |
+| `rc.3` | Log limits for open circuit and full buffer, count at shutdown (#69–#71) (git `763ddb3`) | ✅ prerelease, 2026-11-06 |
 | `1.1.0` | Final, after the open tests pass | Not yet |
